@@ -356,20 +356,22 @@ def _find_project_agent_md(project_root: Path) -> list[Path]:
         project_root: Path to the project root directory.
 
     Returns:
-        List of paths to project AGENTS.md files (may contain 0, 1, or 2 paths).
+        Existing AGENTS.md paths.
+
+            Empty if neither file exists, one entry if only one is present, or
+            two entries if both locations have the file.
     """
-    paths = []
-
-    # Check .deepagents/AGENTS.md (preferred)  # noqa: ERA001
-    deepagents_md = project_root / ".deepagents" / "AGENTS.md"
-    if deepagents_md.exists():
-        paths.append(deepagents_md)
-
-    # Check root AGENTS.md (fallback, but also include if both exist)
-    root_md = project_root / "AGENTS.md"
-    if root_md.exists():
-        paths.append(root_md)
-
+    candidates = [
+        project_root / ".deepagents" / "AGENTS.md",
+        project_root / "AGENTS.md",
+    ]
+    paths: list[Path] = []
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                paths.append(candidate)
+        except OSError:
+            pass
     return paths
 
 
@@ -564,17 +566,24 @@ class Settings:
         """
         return Path.home() / ".deepagents" / agent_name / "AGENTS.md"
 
-    def get_project_agent_md_path(self) -> Path | None:
-        """Get project-level AGENTS.md path.
+    def get_project_agent_md_path(self) -> list[Path]:
+        """Get project-level AGENTS.md paths.
 
-        Returns path regardless of whether the file exists.
+        Checks both `{project_root}/.deepagents/AGENTS.md` and
+        `{project_root}/AGENTS.md`, returning all that exist. If both are
+        present, both are loaded and their instructions are combined, with
+        `.deepagents/AGENTS.md` first.
 
         Returns:
-            Path to {project_root}/.deepagents/AGENTS.md, or None if not in a project
+            Existing AGENTS.md paths.
+
+                Empty if neither file exists or not in a project, one entry if
+                only one is present, or two entries if both locations have the
+                file.
         """
         if not self.project_root:
-            return None
-        return self.project_root / ".deepagents" / "AGENTS.md"
+            return []
+        return _find_project_agent_md(self.project_root)
 
     @staticmethod
     def _is_valid_agent_name(agent_name: str) -> bool:
@@ -1130,17 +1139,13 @@ def _get_default_model_spec() -> str:
         return config.recent_model
 
     if settings.has_openai:
-        model = os.environ.get("OPENAI_MODEL", "gpt-5.2")
-        return f"openai:{model}"
+        return "openai:gpt-5.2"
     if settings.has_anthropic:
-        model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
-        return f"anthropic:{model}"
+        return "anthropic:claude-sonnet-4-5-20250929"
     if settings.has_google:
-        model = os.environ.get("GOOGLE_MODEL", "gemini-3-pro-preview")
-        return f"google_genai:{model}"
+        return "google_genai:gemini-3.1-pro-preview"
     if settings.has_vertex_ai:
-        model = os.environ.get("VERTEX_AI_MODEL", "gemini-3-pro-preview")
-        return f"google_vertexai:{model}"
+        return "google_vertexai:gemini-3.1-pro-preview"
 
     msg = (
         "No credentials configured. Please set one of: "
@@ -1148,6 +1153,16 @@ def _get_default_model_spec() -> str:
         "or GOOGLE_CLOUD_PROJECT"
     )
     raise ModelConfigError(msg)
+
+
+_OPENROUTER_DEFAULT_HEADERS: dict[str, str] = {
+    "HTTP-Referer": "https://github.com/langchain-ai/deepagents",
+    "X-Title": "Deep Agents CLI",
+}
+"""Default attribution headers sent with every OpenRouter request.
+
+See https://openrouter.ai/docs/app-attribution for details.
+"""
 
 
 def _get_provider_kwargs(
@@ -1160,6 +1175,10 @@ def _get_provider_kwargs(
 
     When `model_name` is provided, per-model overrides from the `params`
     sub-table are shallow-merged on top.
+
+    For the `openrouter` provider, default attribution headers (`HTTP-Referer`
+    and `X-Title`) are injected automatically. User-supplied `default_headers`
+    in config take precedence.
 
     Args:
         provider: Provider name (e.g., openai, anthropic, fireworks, ollama).
@@ -1178,6 +1197,11 @@ def _get_provider_kwargs(
         api_key = os.environ.get(api_key_env)
         if api_key:
             result["api_key"] = api_key
+
+    if provider == "openrouter":
+        user_headers = result.get("default_headers") or {}
+        result["default_headers"] = {**_OPENROUTER_DEFAULT_HEADERS, **user_headers}
+
     return result
 
 

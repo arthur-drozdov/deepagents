@@ -31,6 +31,7 @@ from deepagents.backends.protocol import (
     GrepMatch,
     SandboxBackendProtocol,
     WriteResult,
+    execute_accepts_timeout,
 )
 from deepagents.backends.state import StateBackend
 
@@ -466,26 +467,30 @@ class CompositeBackend(BackendProtocol):
     def execute(
         self,
         command: str,
+        *,
+        timeout: int | None = None,
     ) -> ExecuteResponse:
-        """Execute shell command via default backend.
+        """Execute a shell command via the default backend.
+
+        Unlike file operations, execution is not path-routable — it always
+        delegates to the default backend.
 
         Args:
             command: Shell command to execute.
+            timeout: Maximum time in seconds to wait for the command to complete.
+
+                If None, uses the backend's default timeout.
 
         Returns:
             ExecuteResponse with output, exit code, and truncation flag.
 
         Raises:
-            NotImplementedError: If default backend doesn't implement SandboxBackendProtocol.
-
-        Examples:
-            ```python
-            composite = CompositeBackend(default=FilesystemBackend(root_dir="/tmp"), routes={"/memories/": StoreBackend(runtime)})
-
-            result = composite.execute("ls -la")
-            ```
+            NotImplementedError: If the default backend is not a
+                `SandboxBackendProtocol` (i.e., it doesn't support execution).
         """
         if isinstance(self.default, SandboxBackendProtocol):
+            if timeout is not None and execute_accepts_timeout(type(self.default)):
+                return self.default.execute(command, timeout=timeout)
             return self.default.execute(command)
 
         # This shouldn't be reached if the runtime check in the execute tool works correctly,
@@ -499,9 +504,18 @@ class CompositeBackend(BackendProtocol):
     async def aexecute(
         self,
         command: str,
+        *,
+        # ASYNC109 - timeout is a semantic parameter forwarded to the underlying
+        # backend's implementation, not an asyncio.timeout() contract.
+        timeout: int | None = None,  # noqa: ASYNC109
     ) -> ExecuteResponse:
-        """Async version of execute."""
+        """Async version of execute.
+
+        See `execute()` for detailed documentation on parameters and behavior.
+        """
         if isinstance(self.default, SandboxBackendProtocol):
+            if timeout is not None and execute_accepts_timeout(type(self.default)):
+                return await self.default.aexecute(command, timeout=timeout)
             return await self.default.aexecute(command)
 
         # This shouldn't be reached if the runtime check in the execute tool works correctly,

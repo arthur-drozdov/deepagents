@@ -388,8 +388,7 @@ class LocalContextMiddleware(AgentMiddleware):
         output = result.output.strip() if result.output else ""
         if result.exit_code is None or result.exit_code != 0:
             logger.warning(
-                "Local context detection script %s; "
-                "context will be omitted. Output: %.200s",
+                "Local context detection script %s; context will be omitted. Output: %.200s",
                 f"exited with code {result.exit_code}"
                 if result.exit_code is not None
                 else "did not report an exit code",
@@ -397,9 +396,7 @@ class LocalContextMiddleware(AgentMiddleware):
             )
             return None
         if not output:
-            logger.debug(
-                "Local context detection script succeeded but produced no output"
-            )
+            logger.debug("Local context detection script succeeded but produced no output")
         return output or None
 
     # override - state parameter is intentionally narrowed from
