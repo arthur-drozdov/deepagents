@@ -55,6 +55,8 @@ from langgraph.config import get_config
 from langgraph.types import Command
 from typing_extensions import TypedDict
 
+from deepagents.middleware._utils import append_to_system_message
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
@@ -67,6 +69,18 @@ if TYPE_CHECKING:
     from deepagents.backends.protocol import BACKEND_TYPES, BackendProtocol
 
 logger = logging.getLogger(__name__)
+
+SUMMARIZATION_SYSTEM_PROMPT = """## Compact conversation Tool `compact_conversation`
+
+You have access to a `compact_conversation` tool. This tool refreshes your context
+window to reduce context bloat and costs.
+
+You should use the tool when:
+- The user asks to move on to a completely new task for which previous context is likely
+irrelevant.
+- You have finished extracting or synthesizing a result and previous working context is
+no longer needed.
+"""
 
 
 class SummarizationEvent(TypedDict):
@@ -1045,6 +1059,10 @@ A condensed summary follows:
         Returns:
             The model response from the handler.
         """
+        # Append system prompt if configured
+        new_system_message = append_to_system_message(request.system_message, SUMMARIZATION_SYSTEM_PROMPT)
+        request = request.override(system_message=new_system_message)
+
         # Get effective messages based on previous summarization events
         effective_messages = self._get_effective_messages(request)
 
@@ -1136,6 +1154,10 @@ A condensed summary follows:
         Returns:
             The model response from the handler.
         """
+        # Append system prompt if configured
+        new_system_message = append_to_system_message(request.system_message, SUMMARIZATION_SYSTEM_PROMPT)
+        request = request.override(system_message=new_system_message)
+
         # Get effective messages based on previous summarization events
         effective_messages = self._get_effective_messages(request)
 
