@@ -434,66 +434,6 @@ class ExecuteResponse:
     """Whether the output was truncated due to backend limitations."""
 
 
-@dataclass
-class ReplResponse:
-    """Result of REPL execution.
-
-    This is intentionally backend-defined: the backend chooses which REPL/runtime
-    to use and what state (if any) is persisted between calls.
-
-    Attributes:
-        output: Combined stdout/stderr output from the evaluation.
-        error: Error message if evaluation failed, otherwise None.
-        truncated: Whether output was truncated due to backend limitations.
-    """
-
-    output: str
-    error: str | None = None
-    truncated: bool = False
-
-
-class ReplBackendProtocol(BackendProtocol):
-    """Extension of `BackendProtocol` that adds REPL-style code evaluation.
-
-    The backend defines the REPL/runtime and whether it is stateful across calls.
-
-    Adds `repl()`/`arepl()` and an `id` property.
-    """
-
-    @property
-    def id(self) -> str:
-        """Unique identifier for the REPL backend instance."""
-        raise NotImplementedError
-
-    def repl(
-        self,
-        code: str,
-        *,
-        timeout: int | None = None,
-    ) -> ReplResponse:
-        """Evaluate code in a backend-defined REPL.
-
-        Args:
-            code: Code string to evaluate.
-            timeout: Maximum time in seconds to wait for evaluation.
-
-                If None, uses the backend's default timeout.
-
-        Returns:
-            ReplResponse with output, optional error, and truncation flag.
-        """
-        raise NotImplementedError
-
-    async def arepl(
-        self,
-        code: str,
-        *,
-        timeout: int | None = None,  # noqa: ASYNC109
-    ) -> ReplResponse:
-        """Async version of repl."""
-        return await asyncio.to_thread(self.repl, code, timeout=timeout)
-
-
 class SandboxBackendProtocol(BackendProtocol):
     """Extension of `BackendProtocol` that adds shell command execution.
 
