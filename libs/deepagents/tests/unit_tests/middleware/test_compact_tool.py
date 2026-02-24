@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import MagicMock, NonCallableMagicMock, patch
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
 
 from deepagents.middleware.summarization import SummarizationMiddleware
@@ -26,10 +27,14 @@ def _make_mock_backend() -> MagicMock:
     return backend
 
 
+_TEST_PROVIDER = "test-provider"
+
+
 def _make_mock_model() -> MagicMock:
     """Create a mock model that returns a summary response."""
     model = MagicMock()
-    model.profile = {"max_input_tokens": 200000}
+    model.profile = {"max_input_tokens": 200_000}
+    model._get_ls_params.return_value = {"ls_provider": _TEST_PROVIDER}
     response = MagicMock()
     response.text = "Summary of the conversation."
     response.content = "Summary of the conversation."
@@ -38,15 +43,26 @@ def _make_mock_model() -> MagicMock:
     return model
 
 
-def _make_messages(n: int) -> list[MagicMock]:
-    """Create a list of mock messages with unique IDs."""
-    messages = []
-    for i in range(n):
+def _make_messages(n: int, *, total_tokens: int = 120_000) -> list[Any]:
+    """Create a list of mock messages with unique IDs.
+
+    The last message is a real AIMessage with usage_metadata so that
+    ``_is_eligible_for_compaction`` can evaluate reported token usage.
+    """
+    messages: list[Any] = []
+    for i in range(n - 1):
         msg = MagicMock()
         msg.id = f"msg-{i}"
         msg.content = f"Message {i}"
         msg.additional_kwargs = {}
         messages.append(msg)
+    messages.append(
+        AIMessage(
+            content=f"Message {n - 1}",
+            usage_metadata={"input_tokens": 0, "output_tokens": 0, "total_tokens": total_tokens},
+            response_metadata={"model_provider": _TEST_PROVIDER},
+        )
+    )
     return messages
 
 
@@ -80,6 +96,7 @@ def _make_middleware(
     return SummarizationMiddleware(
         model=model,
         backend=backend,
+        trigger=("fraction", 0.85),
         enable_compact_tool=True,
     )
 
@@ -518,3 +535,92 @@ class TestComputeStateCutoff:
             "summary_message": MagicMock(),
         }
         assert SummarizationMiddleware._compute_state_cutoff(bad_event, 4) == 4
+
+
+def _ai_message_with_usage(total_tokens: int, provider: str = "test-provider") -> AIMessage:
+    """Create an AIMessage with usage_metadata and response_metadata."""
+    return AIMessage(
+        content="response",
+        usage_metadata={"input_tokens": 0, "output_tokens": 0, "total_tokens": total_tokens},
+        response_metadata={"model_provider": provider},
+    )
+
+
+def _make_middleware_with_trigger(
+    trigger: Any,  # noqa: ANN401
+    provider: str = "test-provider",
+) -> SummarizationMiddleware:
+    model = _make_mock_model()
+    model._get_ls_params.return_value = {"ls_provider": provider}
+    return SummarizationMiddleware(
+        model=model,
+        backend=_make_mock_backend(),
+        trigger=trigger,
+        enable_compact_tool=True,
+    )
+
+
+class TestIsEligibleForCompaction:
+    """Test the _is_eligible_for_compaction early-exit in compact."""
+
+    def test_under_50pct_tokens_trigger_returns_nothing(self) -> None:
+        """Under 50% of a tokens trigger → not eligible → nothing to compact."""
+        mw = _make_middleware_with_trigger(("tokens", 100_000))
+        messages = [HumanMessage(content="hi"), _ai_message_with_usage(40_000)]
+        runtime = _make_runtime(messages)
+        result = mw._run_compact(runtime)
+        assert "Nothing to compact" in result.update["messages"][0].content
+
+    def test_over_50pct_tokens_trigger_proceeds(self) -> None:
+        """Over 50% of a tokens trigger → eligible → compaction proceeds."""
+        mw = _make_middleware_with_trigger(("tokens", 100_000))
+        messages = [HumanMessage(content="hi"), _ai_message_with_usage(60_000)]
+        runtime = _make_runtime(messages)
+        with (
+            patch.object(mw, "_determine_cutoff_index", return_value=1),
+            patch.object(mw, "_partition_messages", side_effect=lambda m, i: (m[:i], m[i:])),
+            patch.object(mw, "_create_summary", return_value="Summary."),
+            patch.object(mw, "_offload_to_backend", return_value=None),
+        ):
+            result = mw._run_compact(runtime)
+        assert "_summarization_event" in result.update
+
+    def test_under_50pct_fraction_trigger_returns_nothing(self) -> None:
+        """Under 50% of a fraction trigger → not eligible."""
+        mw = _make_middleware_with_trigger(("fraction", 0.8))
+        messages = [HumanMessage(content="hi"), _ai_message_with_usage(50_000)]
+        runtime = _make_runtime(messages)
+        result = mw._run_compact(runtime)
+        assert "Nothing to compact" in result.update["messages"][0].content
+
+    def test_over_50pct_fraction_trigger_proceeds(self) -> None:
+        """Over 50% of a fraction trigger → eligible."""
+        mw = _make_middleware_with_trigger(("fraction", 0.8))
+        messages = [HumanMessage(content="hi"), _ai_message_with_usage(100_000)]
+        runtime = _make_runtime(messages)
+        with (
+            patch.object(mw, "_determine_cutoff_index", return_value=1),
+            patch.object(mw, "_partition_messages", side_effect=lambda m, i: (m[:i], m[i:])),
+            patch.object(mw, "_create_summary", return_value="Summary."),
+            patch.object(mw, "_offload_to_backend", return_value=None),
+        ):
+            result = mw._run_compact(runtime)
+        assert "_summarization_event" in result.update
+
+    def test_no_usage_metadata_falls_through(self) -> None:
+        """No usage metadata → not eligible → falls through to cutoff check."""
+        mw = _make_middleware_with_trigger(("tokens", 100_000))
+        messages = _make_messages(30)
+        runtime = _make_runtime(messages)
+        with patch.object(mw, "_determine_cutoff_index", return_value=0):
+            result = mw._run_compact(runtime)
+        assert "Nothing to compact" in result.update["messages"][0].content
+
+    @pytest.mark.asyncio
+    async def test_under_50pct_async(self) -> None:
+        """Async path: under 50% → nothing to compact."""
+        mw = _make_middleware_with_trigger(("tokens", 100_000))
+        messages = [HumanMessage(content="hi"), _ai_message_with_usage(40_000)]
+        runtime = _make_runtime(messages)
+        result = await mw._arun_compact(runtime)
+        assert "Nothing to compact" in result.update["messages"][0].content

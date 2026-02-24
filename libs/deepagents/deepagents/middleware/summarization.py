@@ -656,6 +656,30 @@ A condensed summary follows:
             }
         )
 
+    def _is_eligible_for_compaction(self, messages: list[AnyMessage]) -> bool:
+        """Check if conversation is over 50% of the token budget."""
+        trigger_conditions = self._lc_helper._trigger_conditions
+        if not trigger_conditions:
+            return False
+
+        for kind, value in trigger_conditions:
+            if kind == "tokens":
+                threshold = int(value * 0.5)
+                if threshold <= 0:
+                    threshold = 1
+                if self._lc_helper._should_summarize_based_on_reported_tokens(messages, threshold):
+                    return True
+            elif kind == "fraction":
+                max_input_tokens = self._lc_helper._get_profile_limits()
+                if max_input_tokens is None:
+                    continue
+                threshold = int(max_input_tokens * value * 0.5)
+                if threshold <= 0:
+                    threshold = 1
+                if self._lc_helper._should_summarize_based_on_reported_tokens(messages, threshold):
+                    return True
+        return False
+
     def _run_compact(self, runtime: ToolRuntime) -> Command:
         """Synchronous compact implementation called by the compact tool.
 
@@ -670,6 +694,9 @@ A condensed summary follows:
         messages = runtime.state.get("messages", [])
         event = runtime.state.get("_summarization_event")
         effective = self._apply_event_to_messages(messages, event)
+
+        if not self._is_eligible_for_compaction(effective):
+            return self._nothing_to_compact(tool_call_id)
 
         cutoff = self._determine_cutoff_index(effective)
         if cutoff == 0:
@@ -702,6 +729,9 @@ A condensed summary follows:
         messages = runtime.state.get("messages", [])
         event = runtime.state.get("_summarization_event")
         effective = self._apply_event_to_messages(messages, event)
+
+        if not self._is_eligible_for_compaction(effective):
+            return self._nothing_to_compact(tool_call_id)
 
         cutoff = self._determine_cutoff_index(effective)
         if cutoff == 0:
