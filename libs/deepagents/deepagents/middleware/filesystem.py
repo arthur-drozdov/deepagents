@@ -899,7 +899,7 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
             coroutine=async_grep,
         )
 
-    def _create_repl_tool(self) -> BaseTool:
+    def _create_repl_tool(self) -> BaseTool:  # noqa: C901
         """Create the repl tool for backend-defined REPL evaluation."""
         tool_description = self._custom_tool_descriptions.get("repl") or REPL_TOOL_DESCRIPTION
 
