@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import inspect
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Annotated, Any
 
@@ -138,14 +140,31 @@ class _MontyOS(AbstractOS):
         return {}
 
 
+REPL_TOOL_DESCRIPTION = """Evaluates code using a Monty-backed Python-like REPL.
+
+CRITICAL: The REPL does NOT retain state between calls. Each `repl` invocation is evaluated from scratch.
+Do NOT assume variables, imports, or helper functions from prior `repl` calls are available.
+
+Capabilities and limitations:
+- Very limited subset of Python syntax (basic expressions, for-loops, if/else).
+- No Python standard library (e.g., `math.sin` is not available). Use an equivalent foreign function if provided.
+- For file access, use `pathlib` (do not use `open`), and do not use context managers (they are not supported).
+
+Available foreign functions:
+{external_functions}
+"""
+
 REPL_SYSTEM_PROMPT = """## REPL tool
 
 You have access to a `repl` tool.
 
-- The REPL does NOT retain state between calls. Each `repl` invocation is evaluated from scratch.
+CRITICAL: The REPL does NOT retain state between calls. Each `repl` invocation is evaluated from scratch.
+Do NOT assume variables, imports, or helper functions from prior `repl` calls are available.
+
 - The REPL supports a very limited subset of Python (roughly Python syntax), but does NOT provide the Python standard library.
   For example, you cannot use `math.sin`.
   If you need functionality that would normally come from the standard library, use an equivalent foreign function if one has been provided.
+- If you want file access, use `pathlib` (do not use `open`), and do not use context managers (they are not supported).
 - Use it for small computations, control flow (for-loops, if/else), and calling externally registered foreign functions.
 
 Available foreign functions:
@@ -164,6 +183,7 @@ class MontyMiddleware(AgentMiddleware[dict[str, Any], ContextT, ResponseT]):
         inputs: list[str] | None = None,
         external_functions: list[str] | None = None,
         external_function_implementations: dict[str, Callable[..., Any]] | None = None,
+        auto_include: bool = False,
         type_check: bool = False,
         type_check_stubs: str | None = None,
     ) -> None:
@@ -175,6 +195,8 @@ class MontyMiddleware(AgentMiddleware[dict[str, Any], ContextT, ResponseT]):
             inputs: Optional stdin lines available to the script.
             external_functions: Names of external functions allowed by Monty.
             external_function_implementations: Implementations for allowed external functions.
+            auto_include: Whether to automatically include function signatures and docstrings
+                for foreign functions in the system prompt.
             type_check: Whether to enable Monty's type checking.
             type_check_stubs: Optional stubs to use when type checking.
         """
@@ -183,6 +205,7 @@ class MontyMiddleware(AgentMiddleware[dict[str, Any], ContextT, ResponseT]):
         self._inputs = inputs
         self._external_functions = external_functions
         self._external_function_implementations = external_function_implementations
+        self._auto_include = auto_include
         self._type_check = type_check
         self._type_check_stubs = type_check_stubs
         self.tools = [self._create_repl_tool()]
@@ -193,9 +216,45 @@ class MontyMiddleware(AgentMiddleware[dict[str, Any], ContextT, ResponseT]):
             return self.backend(runtime)
         return self.backend
 
+    def _format_foreign_function_docs(self, name: str) -> str | None:
+        if not self._auto_include:
+            return None
+        if not self._external_function_implementations:
+            return None
+        func = self._external_function_implementations.get(name)
+        if func is None:
+            return None
+
+        signature = "(…)"
+        with contextlib.suppress(TypeError, ValueError):
+            signature = str(inspect.signature(func))
+
+        doc = inspect.getdoc(func)
+        if not doc:
+            return f"`{name}{signature}`"
+
+        doc_lines = doc.splitlines()
+        max_doc_lines = 10
+        if len(doc_lines) > max_doc_lines:
+            doc_lines = [*doc_lines[:max_doc_lines], "..."]
+        truncated_doc = "\n".join(doc_lines)
+        return f"`{name}{signature}`\n{truncated_doc}"
+
     def _format_repl_system_prompt(self) -> str:
         external_functions = self._external_functions or []
-        formatted_functions = "- (none)" if not external_functions else "\n".join(f"- {name}" for name in external_functions)
+        if not external_functions:
+            formatted_functions = "- (none)"
+        else:
+            formatted_lines: list[str] = []
+            for name in external_functions:
+                docs = self._format_foreign_function_docs(name)
+                if docs is None:
+                    formatted_lines.append(f"- {name}")
+                else:
+                    indented_docs = docs.replace("\n", "\n  ")
+                    formatted_lines.append(f"- {indented_docs}")
+            formatted_functions = "\n".join(formatted_lines)
+
         return REPL_SYSTEM_PROMPT.format(external_functions=formatted_functions)
 
     def modify_request(self, request: ModelRequest[ContextT]) -> ModelRequest[ContextT]:
@@ -249,15 +308,22 @@ class MontyMiddleware(AgentMiddleware[dict[str, Any], ContextT, ResponseT]):
             except pydantic_monty.MontyError as e:
                 return str(e)
 
+            result = []
+
+            def print_callback(stream, value):
+                """"""
+                result.append(str(value))
+
             try:
-                result = m.run(
+                m.run(
                     os=_MontyOS(resolved_backend),
                     limits=limits,
                     external_functions=self._external_function_implementations,
+                    print_callback=print_callback,
                 )
             except pydantic_monty.MontyError as e:
                 return str(e)
-            return str(result)
+            return str("\n".join(result))
 
         async def _arun_monty(
             code: Annotated[str, "Code string to evaluate in Monty."],
@@ -273,9 +339,12 @@ class MontyMiddleware(AgentMiddleware[dict[str, Any], ContextT, ResponseT]):
         ) -> str:
             return _run_monty(code, timeout=timeout, runtime=runtime)
 
+        formatted_functions = self._format_repl_system_prompt().split("Available foreign functions:\n", 1)[1].rstrip()
+        tool_description = REPL_TOOL_DESCRIPTION.format(external_functions=formatted_functions)
+
         return StructuredTool.from_function(
             name="repl",
-            description="Evaluate code using Monty.",
+            description=tool_description,
             func=_sync_monty,
             coroutine=_arun_monty,
         )
