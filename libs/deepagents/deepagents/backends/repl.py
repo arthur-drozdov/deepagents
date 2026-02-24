@@ -11,9 +11,6 @@ import uuid
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
 import pydantic_monty
 from pydantic_monty import AbstractOS, ResourceLimits, StatResult
 
@@ -28,6 +25,9 @@ from deepagents.backends.protocol import (
     ReplResponse,
     WriteResult,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class _MontyOS(AbstractOS):

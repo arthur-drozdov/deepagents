@@ -21,10 +21,7 @@ def main() -> None:
             {
                 "messages": [
                     HumanMessage(
-                        content=(
-                            "Use the repl to compute 523! and Use the repl to "
-                            "write the result to using pathlib /out.txt, then respond done."
-                        )
+                        content=("Use the repl to compute 523! and Use the repl to write the result to using pathlib /out.txt, then respond done.")
                     )
                 ]
             }

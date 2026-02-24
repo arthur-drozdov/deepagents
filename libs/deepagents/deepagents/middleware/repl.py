@@ -6,15 +6,16 @@ from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Annotated, Any
 
 import pydantic_monty
-from langchain.agents.middleware.types import AgentMiddleware, ContextT, ResponseT
+from langchain.agents.middleware.types import AgentMiddleware, ContextT, ModelRequest, ModelResponse, ResponseT
 from langchain.tools import ToolRuntime  # noqa: TC002
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic_monty import AbstractOS, ResourceLimits, StatResult
 
 from deepagents.backends.protocol import BACKEND_TYPES, BackendProtocol  # noqa: TC001
+from deepagents.middleware._utils import append_to_system_message
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
 
 class _MontyOS(AbstractOS):
@@ -137,8 +138,24 @@ class _MontyOS(AbstractOS):
         return {}
 
 
+REPL_SYSTEM_PROMPT = """## REPL tool
+
+You have access to a `repl` tool.
+
+- The REPL does NOT retain state between calls. Each `repl` invocation is evaluated from scratch.
+- The REPL supports a very limited subset of Python (roughly Python syntax), but does NOT provide the Python standard library.
+  For example, you cannot use `math.sin`.
+  If you need functionality that would normally come from the standard library, use an equivalent foreign function if one has been provided.
+- Use it for small computations, control flow (for-loops, if/else), and calling externally registered foreign functions.
+
+Available foreign functions:
+{external_functions}
+"""
+
+
 class MontyMiddleware(AgentMiddleware[dict[str, Any], ContextT, ResponseT]):
     """Provide a Monty-backed `repl` tool to an agent."""
+
     def __init__(
         self,
         *,
@@ -175,6 +192,35 @@ class MontyMiddleware(AgentMiddleware[dict[str, Any], ContextT, ResponseT]):
         if callable(self.backend):
             return self.backend(runtime)
         return self.backend
+
+    def _format_repl_system_prompt(self) -> str:
+        external_functions = self._external_functions or []
+        formatted_functions = "- (none)" if not external_functions else "\n".join(f"- {name}" for name in external_functions)
+        return REPL_SYSTEM_PROMPT.format(external_functions=formatted_functions)
+
+    def modify_request(self, request: ModelRequest[ContextT]) -> ModelRequest[ContextT]:
+        """Inject REPL usage instructions into the system message."""
+        repl_prompt = self._format_repl_system_prompt()
+        new_system_message = append_to_system_message(request.system_message, repl_prompt)
+        return request.override(system_message=new_system_message)
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
+    ) -> ModelResponse[ResponseT]:
+        """Wrap model call to inject REPL instructions into system prompt."""
+        modified_request = self.modify_request(request)
+        return handler(modified_request)
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
+    ) -> ModelResponse[ResponseT]:
+        """Async wrap model call to inject REPL instructions into system prompt."""
+        modified_request = self.modify_request(request)
+        return await handler(modified_request)
 
     def _create_repl_tool(self) -> BaseTool:
         def _run_monty(

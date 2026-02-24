@@ -25,12 +25,7 @@ def test_deep_agent_with_fake_llm_uses_monty_repl_to_write_file(tmp_path: Path) 
                         {
                             "name": "repl",
                             "args": {
-                                "code": (
-                                    "from pathlib import Path\n"
-                                    "result = 2 + 2\n"
-                                    f"Path({out_virtual_path!r}).write_text(str(result))\n"
-                                    "result"
-                                ),
+                                "code": (f"from pathlib import Path\nresult = 2 + 2\nPath({out_virtual_path!r}).write_text(str(result))\nresult"),
                                 "timeout": 5,
                             },
                             "id": "call_1",
