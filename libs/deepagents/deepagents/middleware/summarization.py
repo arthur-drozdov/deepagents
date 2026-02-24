@@ -49,7 +49,6 @@ from langchain.agents.middleware.summarization import (
 )
 from langchain.agents.middleware.types import AgentMiddleware, AgentState, ExtendedModelResponse, PrivateStateAttr
 from langchain.tools import ToolRuntime
-from langchain.tools.tool_node import ToolCallRequest
 from langchain_core.exceptions import ContextOverflowError
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage, get_buffer_string
 from langchain_core.messages.utils import count_tokens_approximately
@@ -82,15 +81,7 @@ You should use the tool when:
 irrelevant.
 - You have finished extracting or synthesizing a result and previous working context is
 no longer needed.
-
-Note: Some tool outputs (e.g., `read_file`, `write_file`) may include **System reminder**
-messages indicating how much of your available context budget has been used. Pay attention
-to these reminders and consider compacting the conversation at an opportune time.
 """
-
-_CONTEXT_REMINDER_THRESHOLDS: tuple[float, ...] = (0.5, 0.7)
-_CONTEXT_REMINDER_TOOL_NAMES: frozenset[str] = frozenset({"read_file", "write_file"})
-_CONTEXT_REMINDER_METADATA_KEY = "_context_reminder_pct"  # track reminders on ToolMessages
 
 
 class SummarizationEvent(TypedDict):
@@ -1076,147 +1067,6 @@ A condensed summary follows:
         else:
             logger.debug("Offloaded %d messages to %s", len(filtered_messages), path)
             return path
-
-    def _get_context_reminder(self, messages: list[AnyMessage]) -> int | None:
-        """Determine if a context budget reminder should be attached.
-
-        Checks whether reported token usage from the last AIMessage crosses one
-        of the ``_CONTEXT_REMINDER_THRESHOLDS`` (as an absolute fraction of
-        ``max_input_tokens``), but only when the middleware is configured with a
-        ``("fraction", value)`` trigger where ``value > 0.5``.
-
-        To avoid duplicate reminders, messages are scanned backwards for an
-        existing ToolMessage whose ``response_metadata`` already carries the
-        ``_CONTEXT_REMINDER_METADATA_KEY`` at or above the candidate threshold.
-
-        Args:
-            messages: The current conversation messages (from state).
-
-        Returns:
-            The integer percentage to include in the reminder (e.g. ``50`` or
-            ``70``), or ``None`` if no reminder is warranted.
-        """
-        trigger_conditions = self._lc_helper._trigger_conditions
-        if not trigger_conditions:
-            return None
-
-        max_input_tokens: int | None = None
-        has_eligible_trigger = False
-        for kind, value in trigger_conditions:
-            if kind == "fraction" and value > 0.5:
-                has_eligible_trigger = True
-                if max_input_tokens is None:
-                    max_input_tokens = self._lc_helper._get_profile_limits()
-                break
-
-        if not has_eligible_trigger or max_input_tokens is None:
-            return None
-
-        best: int | None = None
-        for threshold_fraction in _CONTEXT_REMINDER_THRESHOLDS:
-            threshold_tokens = int(max_input_tokens * threshold_fraction)
-            if threshold_tokens <= 0:
-                threshold_tokens = 1
-            if not self._lc_helper._should_summarize_based_on_reported_tokens(messages, threshold_tokens):
-                continue
-
-            pct = int(threshold_fraction * 100)
-            already_reminded = False
-            for msg in reversed(messages):
-                if isinstance(msg, ToolMessage) and msg.response_metadata.get(_CONTEXT_REMINDER_METADATA_KEY, 0) >= pct:
-                    already_reminded = True
-                    break
-            if not already_reminded:
-                best = pct
-
-        return best
-
-    @staticmethod
-    def _attach_reminder_to_tool_message(tool_result: ToolMessage, pct: int) -> ToolMessage:
-        """Prepend a context-budget reminder to a ToolMessage.
-
-        Args:
-            tool_result: The original tool message.
-            pct: The percentage of context budget crossed.
-
-        Returns:
-            A new ToolMessage with the reminder prepended and metadata marker set.
-        """
-        reminder = (
-            f"**System reminder**: you have crossed {pct}% of your available "
-            "context budget, consider compacting the conversation using the "
-            "`compact_conversation` tool if there's an opportune time."
-        )
-        content = tool_result.content
-        if isinstance(content, str):
-            new_content = f"{reminder}\n\n{content}"
-        else:
-            new_content = [{"type": "text", "text": reminder}, *content]
-        return tool_result.model_copy(
-            update={
-                "content": new_content,
-                "response_metadata": {
-                    **tool_result.response_metadata,
-                    _CONTEXT_REMINDER_METADATA_KEY: pct,
-                },
-            }
-        )
-
-    def wrap_tool_call(
-        self,
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
-    ) -> ToolMessage | Command[Any]:
-        """Attach a context-budget reminder to qualifying tool results.
-
-        Only applies to ``read_file`` and ``write_file`` tool calls when the
-        reported token usage crosses a reminder threshold.
-
-        Args:
-            request: The tool call request being processed.
-            handler: The handler function to call with the request.
-
-        Returns:
-            The tool result, potentially with a context reminder prepended.
-        """
-        tool_result = handler(request)
-        if request.tool_call["name"] not in _CONTEXT_REMINDER_TOOL_NAMES or not isinstance(tool_result, ToolMessage):
-            return tool_result
-
-        messages = request.state.get("messages", [])
-        pct = self._get_context_reminder(messages)
-        if pct is None:
-            return tool_result
-
-        return self._attach_reminder_to_tool_message(tool_result, pct)
-
-    async def awrap_tool_call(
-        self,
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
-    ) -> ToolMessage | Command[Any]:
-        """Attach a context-budget reminder to qualifying tool results (async).
-
-        Only applies to ``read_file`` and ``write_file`` tool calls when the
-        reported token usage crosses a reminder threshold.
-
-        Args:
-            request: The tool call request being processed.
-            handler: The async handler function to call with the request.
-
-        Returns:
-            The tool result, potentially with a context reminder prepended.
-        """
-        tool_result = await handler(request)
-        if request.tool_call["name"] not in _CONTEXT_REMINDER_TOOL_NAMES or not isinstance(tool_result, ToolMessage):
-            return tool_result
-
-        messages = request.state.get("messages", [])
-        pct = self._get_context_reminder(messages)
-        if pct is None:
-            return tool_result
-
-        return self._attach_reminder_to_tool_message(tool_result, pct)
 
     def wrap_model_call(
         self,
