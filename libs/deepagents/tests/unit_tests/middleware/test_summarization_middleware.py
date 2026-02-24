@@ -2341,17 +2341,22 @@ def test_profile_inference_triggers_summary() -> None:
 
     # Create a mock model with profile
     mock_model = make_mock_model()
-    mock_model.profile = {"max_input_tokens": 1000}
+    mock_model.profile = {"max_input_tokens": 1200}
 
     backend = MockBackend()
 
+    # wrap_model_call injects a system message via append_to_system_message,
+    # so counted_messages = 1 system + 4 conversation = 5 messages.
+    # total_tokens = 5 * 200 = 1000.
+    # Note: keep fractions apply to conversation messages only (4 msgs = 800 tokens).
+
     # Test 1: Don't engage summarization when below threshold
-    # total_tokens = 4 * 200 = 800, threshold = 0.81 * 1000 = 810
-    # 800 < 810, so no summarization
+    # total_tokens = 1000, threshold = int(0.85 * 1200) = 1020
+    # 1000 < 1020, so no summarization
     middleware = SummarizationMiddleware(
         model=mock_model,
         backend=backend,
-        trigger=("fraction", 0.81),
+        trigger=("fraction", 0.85),
         keep=("fraction", 0.5),
         token_counter=token_counter,
     )
@@ -2374,14 +2379,14 @@ def test_profile_inference_triggers_summary() -> None:
     assert len(backend.write_calls) == 0
 
     # Test 2: Engage summarization when at threshold
-    # total_tokens = 4 * 200 = 800, threshold = 0.80 * 1000 = 800
-    # 800 >= 800, so summarization triggers
+    # total_tokens = 1000, threshold = int(0.80 * 1200) = 960
+    # 1000 >= 960, so summarization triggers
     backend = MockBackend()  # Reset backend
     middleware = SummarizationMiddleware(
         model=mock_model,
         backend=backend,
         trigger=("fraction", 0.80),
-        keep=("fraction", 0.5),
+        keep=("fraction", 0.4),
         token_counter=token_counter,
     )
 
@@ -2402,19 +2407,21 @@ def test_profile_inference_triggers_summary() -> None:
     assert "summarized" in summary_message.content.lower()
     assert "<summary>" in summary_message.content
 
-    # Should preserve last 2 messages (keep=0.5 * 1000 = 500 tokens, 500/200 = 2.5 messages)
+    # Should preserve last 2 messages (keep=0.4 * 1200 = 480 tokens,
+    # binary search: msgs[2:]=400 <= 480, msgs[1:]=600 > 480, cutoff=2, keeps 2)
     preserved_messages = modified_request.messages[1:]
     assert len(preserved_messages) == 2
     assert [msg.content for msg in preserved_messages] == ["Message 3", "Message 4"]
 
-    # Test 3: With keep=("fraction", 0.6), preserve more messages
-    # target tokens = 0.6 * 1000 = 600, 600/200 = 3 messages
+    # Test 3: With keep=("fraction", 0.5), preserve more messages
+    # target tokens = 0.5 * 1200 = 600,
+    # binary search: msgs[1:]=600 <= 600, msgs[0:]=800 > 600, cutoff=1, keeps 3
     backend = MockBackend()
     middleware = SummarizationMiddleware(
         model=mock_model,
         backend=backend,
         trigger=("fraction", 0.80),
-        keep=("fraction", 0.6),
+        keep=("fraction", 0.5),
         token_counter=token_counter,
     )
 
@@ -2428,7 +2435,7 @@ def test_profile_inference_triggers_summary() -> None:
     assert [msg.content for msg in preserved_messages] == ["Message 2", "Message 3", "Message 4"]
 
     # Test 4: With keep=("fraction", 0.8), keep everything (no summarization needed)
-    # target tokens = 0.8 * 1000 = 800, which equals total tokens, so keep all
+    # target tokens = 0.8 * 1200 = 960, all 4 msgs = 800 <= 960, cutoff=0
     backend = MockBackend()
     middleware = SummarizationMiddleware(
         model=mock_model,
