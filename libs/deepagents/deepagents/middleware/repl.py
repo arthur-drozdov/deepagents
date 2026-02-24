@@ -3,29 +3,23 @@
 from __future__ import annotations
 
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Annotated, Any, NotRequired
+from typing import TYPE_CHECKING, Annotated, Any
 
 import pydantic_monty
+from langchain.agents.middleware.types import AgentMiddleware, ContextT, ResponseT
+from langchain.tools import ToolRuntime  # noqa: TC002
+from langchain_core.tools import BaseTool, StructuredTool
 from pydantic_monty import AbstractOS, ResourceLimits, StatResult
 
-from langchain.agents.middleware.types import AgentMiddleware, AgentState, ContextT, ResponseT
-from langchain.tools import ToolRuntime
-from langchain_core.messages import ToolMessage
-from langchain_core.tools import BaseTool, StructuredTool
-from langgraph.types import Command
-
-from deepagents.backends.protocol import BACKEND_TYPES, BackendProtocol
+from deepagents.backends.protocol import BACKEND_TYPES, BackendProtocol  # noqa: TC001
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-class MontyState(AgentState):
-    repl_state: NotRequired[str]
-
-
 class _MontyOS(AbstractOS):
     def __init__(self, backend: BackendProtocol) -> None:
+        """Init with abckend."""
         self._backend = backend
 
     def path_exists(self, path: PurePosixPath) -> bool:
@@ -143,9 +137,8 @@ class _MontyOS(AbstractOS):
         return {}
 
 
-class MontyMiddleware(AgentMiddleware[MontyState, ContextT, ResponseT]):
-    state_schema = MontyState
-
+class MontyMiddleware(AgentMiddleware[dict[str, Any], ContextT, ResponseT]):
+    """Provide a Monty-backed `repl` tool to an agent."""
     def __init__(
         self,
         *,
@@ -157,6 +150,17 @@ class MontyMiddleware(AgentMiddleware[MontyState, ContextT, ResponseT]):
         type_check: bool = False,
         type_check_stubs: str | None = None,
     ) -> None:
+        """Initialize the middleware.
+
+        Args:
+            backend: Backend to use for filesystem operations from within Monty.
+            script_name: The script name Monty should report in tracebacks.
+            inputs: Optional stdin lines available to the script.
+            external_functions: Names of external functions allowed by Monty.
+            external_function_implementations: Implementations for allowed external functions.
+            type_check: Whether to enable Monty's type checking.
+            type_check_stubs: Optional stubs to use when type checking.
+        """
         self.backend = backend
         self._script_name = script_name
         self._inputs = inputs
@@ -164,10 +168,10 @@ class MontyMiddleware(AgentMiddleware[MontyState, ContextT, ResponseT]):
         self._external_function_implementations = external_function_implementations
         self._type_check = type_check
         self._type_check_stubs = type_check_stubs
-
         self.tools = [self._create_repl_tool()]
 
     def _get_backend(self, runtime: ToolRuntime[Any, Any]) -> BackendProtocol:
+        """Get a backend."""
         if callable(self.backend):
             return self.backend(runtime)
         return self.backend
@@ -177,24 +181,15 @@ class MontyMiddleware(AgentMiddleware[MontyState, ContextT, ResponseT]):
             code: str,
             *,
             timeout: int | None,
-            runtime: ToolRuntime[None, MontyState],
-        ) -> Command:
-            if not runtime.tool_call_id:
-                msg = "Tool call ID is required for repl"
-                raise ValueError(msg)
-
+            runtime: ToolRuntime[None, dict[str, Any]],
+        ) -> str:
             limits = ResourceLimits()
             if timeout is not None:
                 if timeout <= 0:
-                    return Command(
-                        update={
-                            "messages": [ToolMessage(f"Error: timeout must be positive, got {timeout}.", tool_call_id=runtime.tool_call_id)],
-                        }
-                    )
+                    return f"Error: timeout must be positive, got {timeout}."
                 limits["max_duration_secs"] = timeout
 
             resolved_backend = self._get_backend(runtime)
-            repl_state = runtime.state.get("repl_state") if isinstance(runtime.state, dict) else getattr(runtime.state, "repl_state", None)
 
             try:
                 m = pydantic_monty.Monty(
@@ -205,19 +200,8 @@ class MontyMiddleware(AgentMiddleware[MontyState, ContextT, ResponseT]):
                     type_check=self._type_check,
                     type_check_stubs=self._type_check_stubs,
                 )
-            except Exception as e:  # noqa: BLE001
-                return Command(
-                    update={
-                        "repl_state": repl_state or "",
-                        "messages": [ToolMessage(str(e), tool_call_id=runtime.tool_call_id)],
-                    }
-                )
-
-            if repl_state:
-                try:
-                    m = pydantic_monty.Monty.load(repl_state)
-                except Exception:  # noqa: BLE001
-                    pass
+            except pydantic_monty.MontyError as e:
+                return str(e)
 
             try:
                 result = m.run(
@@ -225,49 +209,27 @@ class MontyMiddleware(AgentMiddleware[MontyState, ContextT, ResponseT]):
                     limits=limits,
                     external_functions=self._external_function_implementations,
                 )
-            except Exception as e:  # noqa: BLE001
-                new_state = repl_state or ""
-                try:
-                    new_state = m.dump()
-                except Exception:  # noqa: BLE001
-                    pass
-                return Command(
-                    update={
-                        "repl_state": new_state,
-                        "messages": [ToolMessage(str(e), tool_call_id=runtime.tool_call_id)],
-                    }
-                )
-
-            new_state = repl_state or ""
-            try:
-                new_state = m.dump()
-            except Exception:  # noqa: BLE001
-                pass
-
-            return Command(
-                update={
-                    "repl_state": new_state,
-                    "messages": [ToolMessage(str(result), tool_call_id=runtime.tool_call_id)],
-                }
-            )
+            except pydantic_monty.MontyError as e:
+                return str(e)
+            return str(result)
 
         async def _arun_monty(
             code: Annotated[str, "Code string to evaluate in Monty."],
-            runtime: ToolRuntime[None, MontyState],
-            timeout: Annotated[int | None, "Optional timeout in seconds for this evaluation."] = None,
-        ) -> Command:
+            runtime: ToolRuntime[None, dict[str, Any]],
+            timeout: Annotated[int | None, "Optional timeout in seconds for this evaluation."] = None,  # noqa: ASYNC109
+        ) -> str:
             return _run_monty(code, timeout=timeout, runtime=runtime)
 
         def _sync_monty(
             code: Annotated[str, "Code string to evaluate in Monty."],
-            runtime: ToolRuntime[None, MontyState],
+            runtime: ToolRuntime[None, dict[str, Any]],
             timeout: Annotated[int | None, "Optional timeout in seconds for this evaluation."] = None,
-        ) -> Command:
+        ) -> str:
             return _run_monty(code, timeout=timeout, runtime=runtime)
 
         return StructuredTool.from_function(
             name="repl",
-            description="Evaluate code using Monty. State is persisted in agent state under 'repl_state'.",
+            description="Evaluate code using Monty.",
             func=_sync_monty,
             coroutine=_arun_monty,
         )
