@@ -200,13 +200,13 @@ def test_compact_tool_new_task(tmp_path: Path, model: str) -> None:
 
     agent, _, _ = _setup_summarization_test(tmp_path, model, 35_000)
 
-    run = ls_client.read_run("7c1618cc-0447-40b4-8c4e-c4dc5ad32c21")
+    run = ls_client.read_run("1cf0046a-68a4-4d63-9ee0-3c1b4a722d5f")
     messages = load(run.outputs["messages"])
     thread_id = uuid.uuid4().hex[:8]
     config = {"configurable": {"thread_id": thread_id}}
 
     # TODO: widen `query` of run_agent to accept list anymessage  # noqa: TD002, TD003, FIX002
-    query = "Thanks. Let's move on to a completely different task. To prepare, first spec out how to upgrade a web app to Typescript 5.5"
+    query = "Thanks. Let's move on to a completely new task. To prepare, first spec out how to upgrade a web app to Typescript 5.5"
     result = agent.invoke(
         {"messages": [*messages, HumanMessage(query)]},
         config,
@@ -222,7 +222,7 @@ def test_compact_tool_not_overly_sensitive(tmp_path: Path, model: str) -> None:
 
     agent, _, _ = _setup_summarization_test(tmp_path, model, 35_000)
 
-    run = ls_client.read_run("7c1618cc-0447-40b4-8c4e-c4dc5ad32c21")
+    run = ls_client.read_run("1cf0046a-68a4-4d63-9ee0-3c1b4a722d5f")
     messages = load(run.outputs["messages"])
     thread_id = uuid.uuid4().hex[:8]
     config = {"configurable": {"thread_id": thread_id}}
@@ -253,7 +253,7 @@ def test_compact_tool_large_reads(tmp_path: Path, model: str) -> None:
     )
     backend.upload_files([("/filesystem.py", response.content)])
 
-    run = ls_client.read_run("7c1618cc-0447-40b4-8c4e-c4dc5ad32c21")
+    run = ls_client.read_run("1cf0046a-68a4-4d63-9ee0-3c1b4a722d5f")
     messages = load(run.outputs["messages"])
     thread_id = uuid.uuid4().hex[:8]
     config = {"configurable": {"thread_id": thread_id}}

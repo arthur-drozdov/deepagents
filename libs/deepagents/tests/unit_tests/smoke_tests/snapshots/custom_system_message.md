@@ -114,3 +114,7 @@ You should use the tool when:
 irrelevant.
 - You have finished extracting or synthesizing a result and previous working context is
 no longer needed.
+
+Note: Some tool outputs (e.g., `read_file`, `write_file`) may include **System reminder**
+messages indicating how much of your available context budget has been used. Pay attention
+to these reminders and consider compacting the conversation at an opportune time.

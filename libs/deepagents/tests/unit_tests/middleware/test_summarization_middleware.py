@@ -11,6 +11,7 @@ import pytest
 from langchain.agents.middleware.types import ExtendedModelResponse, ModelRequest, ModelResponse
 from langchain_core.exceptions import ContextOverflowError
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.types import Command
 
 from deepagents.backends.protocol import BackendProtocol, EditResult, FileDownloadResponse, WriteResult
 from deepagents.middleware.summarization import SummarizationMiddleware
@@ -2569,3 +2570,384 @@ async def test_async_offload_and_summary_run_concurrently() -> None:
     assert isinstance(result, ExtendedModelResponse)
     # If sequential, elapsed >= 2 * delay (0.2s). If parallel, elapsed ~ delay (0.1s).
     assert elapsed < 2 * delay, f"Expected parallel execution (<{2 * delay}s) but took {elapsed:.2f}s"
+
+
+# -----------------------------------------------------------------------------
+# wrap_tool_call context reminder tests
+# -----------------------------------------------------------------------------
+
+
+def _make_tool_call_request(
+    tool_name: str,
+    messages: list[BaseMessage],
+    tool_call_id: str = "tc-1",
+) -> "ToolCallRequest":
+    """Build a ToolCallRequest for wrap_tool_call tests.
+
+    Args:
+        tool_name: Name of the tool being called.
+        messages: Conversation messages to put in state.
+        tool_call_id: The tool call id.
+
+    Returns:
+        A ToolCallRequest with the given tool name and state.
+    """
+    from langchain.tools.tool_node import ToolCallRequest
+    from langchain_core.messages import ToolCall
+
+    return ToolCallRequest(
+        tool_call=ToolCall(name=tool_name, args={}, id=tool_call_id),
+        tool=None,
+        state={"messages": messages},
+        runtime=make_mock_runtime(),
+    )
+
+
+def _make_messages_with_usage(total_tokens: int) -> list[BaseMessage]:
+    """Create a minimal message list with usage metadata on the last AIMessage.
+
+    Args:
+        total_tokens: The reported total_tokens value.
+
+    Returns:
+        A list containing a HumanMessage and an AIMessage with usage_metadata.
+    """
+    return [
+        HumanMessage(content="hi", id="h1"),
+        AIMessage(
+            content="hello",
+            id="a1",
+            usage_metadata={"input_tokens": total_tokens - 10, "output_tokens": 10, "total_tokens": total_tokens},
+            response_metadata={"model_provider": "test"},
+        ),
+    ]
+
+
+def test_wrap_tool_call_no_reminder_below_threshold() -> None:
+    """No reminder when usage is below 50% of max_input_tokens."""
+    mock_model = make_mock_model()
+    mock_model.profile = {"max_input_tokens": 10000}
+
+    middleware = SummarizationMiddleware(
+        model=mock_model,
+        backend=MockBackend(),
+        trigger=("fraction", 0.85),
+        keep=("messages", 5),
+        token_counter=lambda msgs, **kw: len(msgs) * 200,
+    )
+
+    messages = _make_messages_with_usage(total_tokens=4000)
+    request = _make_tool_call_request("read_file", messages)
+    handler = lambda req: ToolMessage(content="file contents", tool_call_id="tc-1")
+
+    result = middleware.wrap_tool_call(request, handler)
+
+    assert isinstance(result, ToolMessage)
+    assert "System reminder" not in result.content
+    assert "_context_reminder_pct" not in result.response_metadata
+
+
+def test_wrap_tool_call_reminder_at_50_pct() -> None:
+    """Reminder at 50% when usage crosses that threshold."""
+    mock_model = make_mock_model()
+    mock_model.profile = {"max_input_tokens": 10000}
+
+    middleware = SummarizationMiddleware(
+        model=mock_model,
+        backend=MockBackend(),
+        trigger=("fraction", 0.85),
+        keep=("messages", 5),
+        token_counter=lambda msgs, **kw: len(msgs) * 200,
+    )
+
+    messages = _make_messages_with_usage(total_tokens=5500)
+    request = _make_tool_call_request("read_file", messages)
+    handler = lambda req: ToolMessage(content="file contents", tool_call_id="tc-1")
+
+    result = middleware.wrap_tool_call(request, handler)
+
+    assert isinstance(result, ToolMessage)
+    assert "crossed 50%" in result.content
+    assert "System reminder" in result.content
+    assert result.response_metadata["_context_reminder_pct"] == 50
+
+
+def test_wrap_tool_call_reminder_at_70_pct() -> None:
+    """Reminder jumps to 70% when usage crosses that threshold."""
+    mock_model = make_mock_model()
+    mock_model.profile = {"max_input_tokens": 10000}
+
+    middleware = SummarizationMiddleware(
+        model=mock_model,
+        backend=MockBackend(),
+        trigger=("fraction", 0.85),
+        keep=("messages", 5),
+        token_counter=lambda msgs, **kw: len(msgs) * 200,
+    )
+
+    messages = _make_messages_with_usage(total_tokens=7500)
+    request = _make_tool_call_request("read_file", messages)
+    handler = lambda req: ToolMessage(content="file contents", tool_call_id="tc-1")
+
+    result = middleware.wrap_tool_call(request, handler)
+
+    assert isinstance(result, ToolMessage)
+    assert "crossed 70%" in result.content
+    assert result.response_metadata["_context_reminder_pct"] == 70
+
+
+def test_wrap_tool_call_no_duplicate_reminder() -> None:
+    """No duplicate reminder when a prior ToolMessage already has the marker."""
+    mock_model = make_mock_model()
+    mock_model.profile = {"max_input_tokens": 10000}
+
+    middleware = SummarizationMiddleware(
+        model=mock_model,
+        backend=MockBackend(),
+        trigger=("fraction", 0.85),
+        keep=("messages", 5),
+        token_counter=lambda msgs, **kw: len(msgs) * 200,
+    )
+
+    messages = [
+        HumanMessage(content="hi", id="h1"),
+        AIMessage(
+            content="let me read",
+            id="a1",
+            tool_calls=[{"id": "tc-prev", "name": "read_file", "args": {}}],
+        ),
+        ToolMessage(
+            content="previous file contents",
+            tool_call_id="tc-prev",
+            id="t1",
+            response_metadata={"_context_reminder_pct": 50},
+        ),
+        AIMessage(
+            content="now reading another",
+            id="a2",
+            usage_metadata={"input_tokens": 5400, "output_tokens": 100, "total_tokens": 5500},
+            response_metadata={"model_provider": "test"},
+            tool_calls=[{"id": "tc-2", "name": "read_file", "args": {}}],
+        ),
+    ]
+
+    request = _make_tool_call_request("read_file", messages, tool_call_id="tc-2")
+    handler = lambda req: ToolMessage(content="new file contents", tool_call_id="tc-2")
+
+    result = middleware.wrap_tool_call(request, handler)
+
+    assert isinstance(result, ToolMessage)
+    assert "System reminder" not in result.content
+    assert "_context_reminder_pct" not in result.response_metadata
+
+
+def test_wrap_tool_call_skips_non_qualifying_tools() -> None:
+    """No reminder for tools other than read_file and write_file."""
+    mock_model = make_mock_model()
+    mock_model.profile = {"max_input_tokens": 10000}
+
+    middleware = SummarizationMiddleware(
+        model=mock_model,
+        backend=MockBackend(),
+        trigger=("fraction", 0.85),
+        keep=("messages", 5),
+        token_counter=lambda msgs, **kw: len(msgs) * 200,
+    )
+
+    messages = _make_messages_with_usage(total_tokens=5500)
+    request = _make_tool_call_request("edit_file", messages)
+    handler = lambda req: ToolMessage(content="edit result", tool_call_id="tc-1")
+
+    result = middleware.wrap_tool_call(request, handler)
+
+    assert isinstance(result, ToolMessage)
+    assert "System reminder" not in result.content
+
+
+def test_wrap_tool_call_skips_low_fraction_trigger() -> None:
+    """No reminder when trigger fraction is <= 0.5."""
+    mock_model = make_mock_model()
+    mock_model.profile = {"max_input_tokens": 10000}
+
+    middleware = SummarizationMiddleware(
+        model=mock_model,
+        backend=MockBackend(),
+        trigger=("fraction", 0.5),
+        keep=("messages", 5),
+        token_counter=lambda msgs, **kw: len(msgs) * 200,
+    )
+
+    messages = _make_messages_with_usage(total_tokens=5500)
+    request = _make_tool_call_request("read_file", messages)
+    handler = lambda req: ToolMessage(content="file contents", tool_call_id="tc-1")
+
+    result = middleware.wrap_tool_call(request, handler)
+
+    assert isinstance(result, ToolMessage)
+    assert "System reminder" not in result.content
+
+
+def test_wrap_tool_call_skips_non_fraction_trigger() -> None:
+    """No reminder when trigger kind is not 'fraction'."""
+    mock_model = make_mock_model()
+    mock_model.profile = {"max_input_tokens": 10000}
+
+    middleware = SummarizationMiddleware(
+        model=mock_model,
+        backend=MockBackend(),
+        trigger=("tokens", 8000),
+        keep=("messages", 5),
+        token_counter=lambda msgs, **kw: len(msgs) * 200,
+    )
+
+    messages = _make_messages_with_usage(total_tokens=5500)
+    request = _make_tool_call_request("read_file", messages)
+    handler = lambda req: ToolMessage(content="file contents", tool_call_id="tc-1")
+
+    result = middleware.wrap_tool_call(request, handler)
+
+    assert isinstance(result, ToolMessage)
+    assert "System reminder" not in result.content
+
+
+def test_wrap_tool_call_write_file_gets_reminder() -> None:
+    """write_file also gets reminders, not just read_file."""
+    mock_model = make_mock_model()
+    mock_model.profile = {"max_input_tokens": 10000}
+
+    middleware = SummarizationMiddleware(
+        model=mock_model,
+        backend=MockBackend(),
+        trigger=("fraction", 0.85),
+        keep=("messages", 5),
+        token_counter=lambda msgs, **kw: len(msgs) * 200,
+    )
+
+    messages = _make_messages_with_usage(total_tokens=5500)
+    request = _make_tool_call_request("write_file", messages)
+    handler = lambda req: ToolMessage(content="file written", tool_call_id="tc-1")
+
+    result = middleware.wrap_tool_call(request, handler)
+
+    assert isinstance(result, ToolMessage)
+    assert "crossed 50%" in result.content
+    assert result.response_metadata["_context_reminder_pct"] == 50
+
+
+def test_wrap_tool_call_passes_through_command() -> None:
+    """Commands returned by handler are passed through without modification."""
+    mock_model = make_mock_model()
+    mock_model.profile = {"max_input_tokens": 10000}
+
+    middleware = SummarizationMiddleware(
+        model=mock_model,
+        backend=MockBackend(),
+        trigger=("fraction", 0.85),
+        keep=("messages", 5),
+        token_counter=lambda msgs, **kw: len(msgs) * 200,
+    )
+
+    messages = _make_messages_with_usage(total_tokens=5500)
+    request = _make_tool_call_request("read_file", messages)
+    cmd = Command(update={"some_key": "value"})
+    handler = lambda req: cmd
+
+    result = middleware.wrap_tool_call(request, handler)
+
+    assert result is cmd
+
+
+async def test_awrap_tool_call_reminder_at_50_pct() -> None:
+    """Async version also attaches reminders."""
+    mock_model = make_mock_model()
+    mock_model.profile = {"max_input_tokens": 10000}
+
+    middleware = SummarizationMiddleware(
+        model=mock_model,
+        backend=MockBackend(),
+        trigger=("fraction", 0.85),
+        keep=("messages", 5),
+        token_counter=lambda msgs, **kw: len(msgs) * 200,
+    )
+
+    messages = _make_messages_with_usage(total_tokens=5500)
+    request = _make_tool_call_request("read_file", messages)
+
+    async def handler(req: "ToolCallRequest") -> ToolMessage:
+        return ToolMessage(content="file contents", tool_call_id="tc-1")
+
+    result = await middleware.awrap_tool_call(request, handler)
+
+    assert isinstance(result, ToolMessage)
+    assert "crossed 50%" in result.content
+    assert result.response_metadata["_context_reminder_pct"] == 50
+
+
+def test_wrap_tool_call_70_pct_after_50_pct_already_reminded() -> None:
+    """70% reminder fires even when 50% was already reminded."""
+    mock_model = make_mock_model()
+    mock_model.profile = {"max_input_tokens": 10000}
+
+    middleware = SummarizationMiddleware(
+        model=mock_model,
+        backend=MockBackend(),
+        trigger=("fraction", 0.85),
+        keep=("messages", 5),
+        token_counter=lambda msgs, **kw: len(msgs) * 200,
+    )
+
+    messages = [
+        HumanMessage(content="hi", id="h1"),
+        AIMessage(
+            content="let me read",
+            id="a1",
+            tool_calls=[{"id": "tc-prev", "name": "read_file", "args": {}}],
+        ),
+        ToolMessage(
+            content="previous file",
+            tool_call_id="tc-prev",
+            id="t1",
+            response_metadata={"_context_reminder_pct": 50},
+        ),
+        AIMessage(
+            content="reading more",
+            id="a2",
+            usage_metadata={"input_tokens": 7400, "output_tokens": 100, "total_tokens": 7500},
+            response_metadata={"model_provider": "test"},
+            tool_calls=[{"id": "tc-2", "name": "read_file", "args": {}}],
+        ),
+    ]
+
+    request = _make_tool_call_request("read_file", messages, tool_call_id="tc-2")
+    handler = lambda req: ToolMessage(content="more file contents", tool_call_id="tc-2")
+
+    result = middleware.wrap_tool_call(request, handler)
+
+    assert isinstance(result, ToolMessage)
+    assert "crossed 70%" in result.content
+    assert result.response_metadata["_context_reminder_pct"] == 70
+
+
+def test_wrap_tool_call_no_profile_no_reminder() -> None:
+    """No reminder when model profile becomes unavailable after init."""
+    mock_model = make_mock_model()
+    mock_model.profile = {"max_input_tokens": 10000}
+
+    middleware = SummarizationMiddleware(
+        model=mock_model,
+        backend=MockBackend(),
+        trigger=("fraction", 0.85),
+        keep=("messages", 5),
+        token_counter=lambda msgs, **kw: len(msgs) * 200,
+    )
+
+    mock_model.profile = {}
+
+    messages = _make_messages_with_usage(total_tokens=5500)
+    request = _make_tool_call_request("read_file", messages)
+    handler = lambda req: ToolMessage(content="file contents", tool_call_id="tc-1")
+
+    result = middleware.wrap_tool_call(request, handler)
+
+    assert isinstance(result, ToolMessage)
+    assert "System reminder" not in result.content
