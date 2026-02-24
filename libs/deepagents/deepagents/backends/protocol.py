@@ -434,19 +434,6 @@ class ExecuteResponse:
     """Whether the output was truncated due to backend limitations."""
 
 
-class SandboxBackendProtocol(BackendProtocol):
-    """Extension of `BackendProtocol` that adds shell command execution.
-
-    Designed for backends running in isolated environments (containers, VMs,
-    remote hosts).
-
-    Adds `execute()`/`aexecute()` for shell commands and an `id` property.
-
-    See `BaseSandbox` for a base class that implements all inherited file
-    operations by delegating to `execute()`.
-    """
-
-
 @dataclass
 class ReplResponse:
     """Result of REPL execution.

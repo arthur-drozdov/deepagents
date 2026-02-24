@@ -1120,9 +1120,7 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
             if has_execute_tool:
                 backend_supports_execution = _supports_execution(backend)
                 if not backend_supports_execution:
-                    filtered_tools = [
-                        tool for tool in request.tools if (tool.name if hasattr(tool, "name") else tool.get("name")) != "execute"
-                    ]
+                    filtered_tools = [tool for tool in request.tools if (tool.name if hasattr(tool, "name") else tool.get("name")) != "execute"]
                     request = request.override(tools=filtered_tools)
                     has_execute_tool = False
 
@@ -1181,9 +1179,7 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
             if has_execute_tool:
                 backend_supports_execution = _supports_execution(backend)
                 if not backend_supports_execution:
-                    filtered_tools = [
-                        tool for tool in request.tools if (tool.name if hasattr(tool, "name") else tool.get("name")) != "execute"
-                    ]
+                    filtered_tools = [tool for tool in request.tools if (tool.name if hasattr(tool, "name") else tool.get("name")) != "execute"]
                     request = request.override(tools=filtered_tools)
                     has_execute_tool = False
 
