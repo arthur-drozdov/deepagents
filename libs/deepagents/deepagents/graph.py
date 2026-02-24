@@ -1,7 +1,7 @@
 """Deep Agents come with planning, filesystem, and subagents."""
 
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, cast
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware, InterruptOnConfig, TodoListMiddleware
@@ -86,7 +86,6 @@ def create_deep_agent(  # noqa: C901, PLR0912, PLR0915  # Complex graph assembly
     system_prompt: str | SystemMessage | None = None,
     middleware: Sequence[AgentMiddleware] = (),
     subagents: list[SubAgent | CompiledSubAgent] | None = None,
-    subagent_model: str | BaseChatModel | None = None,
     skills: list[str] | None = None,
     memory: list[str] | None = None,
     response_format: ResponseFormat | None = None,
@@ -141,10 +140,6 @@ def create_deep_agent(  # noqa: C901, PLR0912, PLR0915  # Complex graph assembly
             - (optional) `tools`
             - (optional) `model` (either a `LanguageModelLike` instance or `dict` settings)
             - (optional) `middleware` (list of `AgentMiddleware`)
-        subagent_model: Optional model for the general-purpose subagent and default for custom subagents.
-
-            Accepts a `str` in `provider:model` format or a `BaseChatModel` instance.
-            If `None`, subagents inherit the main agent's `model`.
         skills: Optional list of skill source paths (e.g., `["/skills/user/", "/skills/project/"]`).
 
             Paths must be specified using POSIX conventions (forward slashes) and are relative
@@ -195,73 +190,32 @@ def create_deep_agent(  # noqa: C901, PLR0912, PLR0915  # Complex graph assembly
     # Compute summarization defaults based on model profile
     summarization_defaults = _compute_summarization_defaults(model)
 
-    # Resolve subagent_model: use provided value or fall back to main model
-    if subagent_model is not None:
-        if isinstance(subagent_model, str):
-            if subagent_model.startswith("openai:"):
-                subagent_model_init_params: dict = {"use_responses_api": True}
-            else:
-                subagent_model_init_params = {}
-            resolved_subagent_model: BaseChatModel = init_chat_model(subagent_model, **subagent_model_init_params)
-        else:
-            resolved_subagent_model = subagent_model
-    else:
-        resolved_subagent_model = model
-
     backend = backend if backend is not None else (StateBackend)
 
-    # Build general-purpose subagent with default middleware stack
-    gp_summarization_defaults = _compute_summarization_defaults(resolved_subagent_model)
-    gp_middleware: list[AgentMiddleware[Any, Any, Any]] = [
-        TodoListMiddleware(),
-        FilesystemMiddleware(backend=backend),
-        SummarizationMiddleware(
-            model=resolved_subagent_model,
-            backend=backend,
-            trigger=gp_summarization_defaults["trigger"],
-            keep=gp_summarization_defaults["keep"],
-            trim_tokens_to_summarize=None,
-            truncate_args_settings=gp_summarization_defaults["truncate_args_settings"],
-        ),
-        AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
-        PatchToolCallsMiddleware(),
-    ]
-    if skills is not None:
-        gp_middleware.append(SkillsMiddleware(backend=backend, sources=skills))
-    if interrupt_on is not None:
-        gp_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
-
-    general_purpose_spec: SubAgent = {  # ty: ignore[missing-typed-dict-key]
-        **GENERAL_PURPOSE_SUBAGENT,
-        "model": resolved_subagent_model,
-        "tools": tools or [],
-        "middleware": gp_middleware,
-    }
-
-    # Process user-provided subagents to fill in defaults for model, tools, and middleware
+    general_purpose_override: SubAgent | CompiledSubAgent | None = None
     processed_subagents: list[SubAgent | CompiledSubAgent] = []
     for spec in subagents or []:
+        if spec["name"] == GENERAL_PURPOSE_SUBAGENT["name"]:
+            general_purpose_override = spec
+            continue
         if "runnable" in spec:
-            # CompiledSubAgent - use as-is
             processed_subagents.append(spec)
         else:
-            # SubAgent - fill in defaults and prepend base middleware
-            spec_model = spec.get("model", resolved_subagent_model)
-            if isinstance(spec_model, str):
-                spec_model = init_chat_model(spec_model)
+            subagent_model = spec.get("model", model)
+            if isinstance(subagent_model, str):
+                subagent_model = init_chat_model(subagent_model)
 
-            # Build middleware: base stack + skills (if specified) + user's middleware
-            spec_summarization_defaults = _compute_summarization_defaults(spec_model)
+            subagent_summarization_defaults = _compute_summarization_defaults(subagent_model)
             subagent_middleware: list[AgentMiddleware[Any, Any, Any]] = [
                 TodoListMiddleware(),
                 FilesystemMiddleware(backend=backend),
                 SummarizationMiddleware(
-                    model=spec_model,
+                    model=subagent_model,
                     backend=backend,
-                    trigger=spec_summarization_defaults["trigger"],
-                    keep=spec_summarization_defaults["keep"],
+                    trigger=subagent_summarization_defaults["trigger"],
+                    keep=subagent_summarization_defaults["keep"],
                     trim_tokens_to_summarize=None,
-                    truncate_args_settings=spec_summarization_defaults["truncate_args_settings"],
+                    truncate_args_settings=subagent_summarization_defaults["truncate_args_settings"],
                 ),
                 AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
                 PatchToolCallsMiddleware(),
@@ -273,13 +227,82 @@ def create_deep_agent(  # noqa: C901, PLR0912, PLR0915  # Complex graph assembly
 
             processed_spec: SubAgent = {  # ty: ignore[missing-typed-dict-key]
                 **spec,
-                "model": spec_model,
+                "model": subagent_model,
                 "tools": spec.get("tools", tools or []),
                 "middleware": subagent_middleware,
             }
             processed_subagents.append(processed_spec)
 
-    # Combine GP with processed user-provided subagents
+    if general_purpose_override is None:
+        gp_model = model
+        gp_summarization_defaults = _compute_summarization_defaults(gp_model)
+        gp_middleware: list[AgentMiddleware[Any, Any, Any]] = [
+            TodoListMiddleware(),
+            FilesystemMiddleware(backend=backend),
+            SummarizationMiddleware(
+                model=gp_model,
+                backend=backend,
+                trigger=gp_summarization_defaults["trigger"],
+                keep=gp_summarization_defaults["keep"],
+                trim_tokens_to_summarize=None,
+                truncate_args_settings=gp_summarization_defaults["truncate_args_settings"],
+            ),
+            AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
+            PatchToolCallsMiddleware(),
+        ]
+        if skills is not None:
+            gp_middleware.append(SkillsMiddleware(backend=backend, sources=skills))
+        if interrupt_on is not None:
+            gp_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
+
+        general_purpose_spec = cast(
+            "SubAgent",
+            {
+                **GENERAL_PURPOSE_SUBAGENT,
+                "model": gp_model,
+                "tools": tools or [],
+                "middleware": gp_middleware,
+            },
+        )
+    elif "runnable" in general_purpose_override:
+        general_purpose_spec = general_purpose_override
+    else:
+        gp_model = general_purpose_override.get("model", model)
+        if isinstance(gp_model, str):
+            gp_model = init_chat_model(gp_model)
+
+        gp_summarization_defaults = _compute_summarization_defaults(gp_model)
+        gp_middleware = [
+            TodoListMiddleware(),
+            FilesystemMiddleware(backend=backend),
+            SummarizationMiddleware(
+                model=gp_model,
+                backend=backend,
+                trigger=gp_summarization_defaults["trigger"],
+                keep=gp_summarization_defaults["keep"],
+                trim_tokens_to_summarize=None,
+                truncate_args_settings=gp_summarization_defaults["truncate_args_settings"],
+            ),
+            AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
+            PatchToolCallsMiddleware(),
+        ]
+        gp_skills = general_purpose_override.get("skills") if "skills" in general_purpose_override else skills
+        if gp_skills:
+            gp_middleware.append(SkillsMiddleware(backend=backend, sources=gp_skills))
+        if interrupt_on is not None:
+            gp_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
+        gp_middleware.extend(general_purpose_override.get("middleware", []))
+
+        general_purpose_spec = cast(
+            "SubAgent",
+            {
+                **general_purpose_override,
+                "model": gp_model,
+                "tools": general_purpose_override.get("tools", tools or []),
+                "middleware": gp_middleware,
+            },
+        )
+
     all_subagents: list[SubAgent | CompiledSubAgent] = [general_purpose_spec, *processed_subagents]
 
     # Build main agent middleware stack
