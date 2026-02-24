@@ -28,6 +28,8 @@ from deepagents.backends.protocol import (
     BACKEND_TYPES as BACKEND_TYPES,  # Re-export type here for backwards compatibility
     BackendProtocol,
     EditResult,
+    ReplBackendProtocol,
+    ReplResponse,
     SandboxBackendProtocol,
     WriteResult,
     execute_accepts_timeout,
@@ -193,6 +195,15 @@ Examples:
 - Show matching lines: `grep(pattern="error", output_mode="content")`
 - Search for code with special chars: `grep(pattern="def __init__(self):")`"""
 
+REPL_TOOL_DESCRIPTION = """Evaluates code in a backend-defined REPL/runtime.
+
+Usage:
+- The backend defines which REPL/runtime is used and whether state is persisted between calls.
+- Returns combined output and an optional error message.
+
+Note: This tool is only available if the backend supports REPL evaluation (ReplBackendProtocol).
+If REPL evaluation is not supported, the tool will return an error message."""
+
 EXECUTE_TOOL_DESCRIPTION = """Executes a shell command in an isolated sandbox environment.
 
 Usage:
@@ -265,6 +276,12 @@ Use this tool to run commands, scripts, tests, builds, and other shell operation
 
 - execute: run a shell command in the sandbox (returns output and exit code)"""
 
+REPL_SYSTEM_PROMPT = """## REPL Tool `repl`
+
+You have access to a `repl` tool for evaluating code in a backend-defined REPL/runtime.
+
+- repl: evaluate code in a backend-defined REPL (returns output and error)"""
+
 
 def _supports_execution(backend: BackendProtocol) -> bool:
     """Check if a backend supports command execution.
@@ -284,6 +301,32 @@ def _supports_execution(backend: BackendProtocol) -> bool:
 
     # For other backends, use isinstance check
     return isinstance(backend, SandboxBackendProtocol)
+
+
+def _supports_repl(backend: BackendProtocol) -> bool:
+    """Check if a backend supports REPL-style evaluation.
+
+    This intentionally does not route through CompositeBackend in this first pass.
+
+    Args:
+        backend: The backend to check.
+
+    Returns:
+        True if the backend supports repl, False otherwise.
+    """
+    return isinstance(backend, ReplBackendProtocol)
+
+
+def _format_repl_response(result: ReplResponse) -> str:
+    parts = [result.output]
+
+    if result.error:
+        parts.append(f"\n[Error]\n{result.error}")
+
+    if result.truncated:
+        parts.append("\n[Output was truncated due to size limits]")
+
+    return "".join(parts)
 
 
 # Tools that should be excluded from the large result eviction logic.
@@ -457,6 +500,7 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
             self._create_glob_tool(),
             self._create_grep_tool(),
             self._create_execute_tool(),
+            self._create_repl_tool(),
         ]
 
     def _get_backend(self, runtime: ToolRuntime[Any, Any]) -> BackendProtocol:
@@ -855,6 +899,83 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
             coroutine=async_grep,
         )
 
+    def _create_repl_tool(self) -> BaseTool:
+        """Create the repl tool for backend-defined REPL evaluation."""
+        tool_description = self._custom_tool_descriptions.get("repl") or REPL_TOOL_DESCRIPTION
+
+        def sync_repl(
+            code: Annotated[str, "Code string to evaluate in the backend-defined REPL/runtime."],
+            runtime: ToolRuntime[None, FilesystemState],
+            timeout: Annotated[
+                int | None,
+                "Optional timeout in seconds for this evaluation. Overrides the default timeout. Use for long-running code.",
+            ] = None,
+        ) -> str:
+            """Synchronous wrapper for repl tool."""
+            if timeout is not None:
+                if timeout <= 0:
+                    return f"Error: timeout must be positive, got {timeout}."
+                if timeout > self._max_execute_timeout:
+                    return f"Error: timeout {timeout}s exceeds maximum allowed ({self._max_execute_timeout}s)."
+
+            resolved_backend = self._get_backend(runtime)
+            if not _supports_repl(resolved_backend):
+                return (
+                    "Error: REPL evaluation not available. This agent's backend "
+                    "does not support repl (ReplBackendProtocol). "
+                    "To use the repl tool, provide a backend that implements ReplBackendProtocol."
+                )
+
+            repl_backend = cast("ReplBackendProtocol", resolved_backend)
+            try:
+                result = repl_backend.repl(code, timeout=timeout)
+            except NotImplementedError as e:
+                return f"Error: REPL evaluation not available. {e}"
+            except ValueError as e:
+                return f"Error: Invalid parameter. {e}"
+
+            return _format_repl_response(result)
+
+        async def async_repl(
+            code: Annotated[str, "Code string to evaluate in the backend-defined REPL/runtime."],
+            runtime: ToolRuntime[None, FilesystemState],
+            timeout: Annotated[  # noqa: ASYNC109
+                int | None,
+                "Optional timeout in seconds for this evaluation. Overrides the default timeout. Use for long-running code.",
+            ] = None,
+        ) -> str:
+            """Asynchronous wrapper for repl tool."""
+            if timeout is not None:
+                if timeout <= 0:
+                    return f"Error: timeout must be positive, got {timeout}."
+                if timeout > self._max_execute_timeout:
+                    return f"Error: timeout {timeout}s exceeds maximum allowed ({self._max_execute_timeout}s)."
+
+            resolved_backend = self._get_backend(runtime)
+            if not _supports_repl(resolved_backend):
+                return (
+                    "Error: REPL evaluation not available. This agent's backend "
+                    "does not support repl (ReplBackendProtocol). "
+                    "To use the repl tool, provide a backend that implements ReplBackendProtocol."
+                )
+
+            repl_backend = cast("ReplBackendProtocol", resolved_backend)
+            try:
+                result = await repl_backend.arepl(code, timeout=timeout) if timeout is not None else await repl_backend.arepl(code)
+            except NotImplementedError as e:
+                return f"Error: REPL evaluation not available. {e}"
+            except ValueError as e:
+                return f"Error: Invalid parameter. {e}"
+
+            return _format_repl_response(result)
+
+        return StructuredTool.from_function(
+            name="repl",
+            description=tool_description,
+            func=sync_repl,
+            coroutine=async_repl,
+        )
+
     def _create_execute_tool(self) -> BaseTool:  # noqa: C901
         """Create the execute tool for sandbox command execution."""
         tool_description = self._custom_tool_descriptions.get("execute") or EXECUTE_TOOL_DESCRIPTION
@@ -987,20 +1108,30 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
         Returns:
             The model response from the handler.
         """
-        # Check if execute tool is present and if backend supports it
+        # Check if execute/repl tools are present and if backend supports them
         has_execute_tool = any((tool.name if hasattr(tool, "name") else tool.get("name")) == "execute" for tool in request.tools)
+        has_repl_tool = any((tool.name if hasattr(tool, "name") else tool.get("name")) == "repl" for tool in request.tools)
 
         backend_supports_execution = False
-        if has_execute_tool:
-            # Resolve backend to check execution support
+        backend_supports_repl = False
+        if has_execute_tool or has_repl_tool:
             backend = self._get_backend(request.runtime)  # ty: ignore[invalid-argument-type]
-            backend_supports_execution = _supports_execution(backend)
 
-            # If execute tool exists but backend doesn't support it, filter it out
-            if not backend_supports_execution:
-                filtered_tools = [tool for tool in request.tools if (tool.name if hasattr(tool, "name") else tool.get("name")) != "execute"]
-                request = request.override(tools=filtered_tools)
-                has_execute_tool = False
+            if has_execute_tool:
+                backend_supports_execution = _supports_execution(backend)
+                if not backend_supports_execution:
+                    filtered_tools = [
+                        tool for tool in request.tools if (tool.name if hasattr(tool, "name") else tool.get("name")) != "execute"
+                    ]
+                    request = request.override(tools=filtered_tools)
+                    has_execute_tool = False
+
+            if has_repl_tool:
+                backend_supports_repl = _supports_repl(backend)
+                if not backend_supports_repl:
+                    filtered_tools = [tool for tool in request.tools if (tool.name if hasattr(tool, "name") else tool.get("name")) != "repl"]
+                    request = request.override(tools=filtered_tools)
+                    has_repl_tool = False
 
         # Use custom system prompt if provided, otherwise generate dynamically
         if self._custom_system_prompt is not None:
@@ -1012,6 +1143,9 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
             # Add execution instructions if execute tool is available
             if has_execute_tool and backend_supports_execution:
                 prompt_parts.append(EXECUTION_SYSTEM_PROMPT)
+
+            if has_repl_tool and backend_supports_repl:
+                prompt_parts.append(REPL_SYSTEM_PROMPT)
 
             system_prompt = "\n\n".join(prompt_parts).strip()
 
@@ -1035,20 +1169,30 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
         Returns:
             The model response from the handler.
         """
-        # Check if execute tool is present and if backend supports it
+        # Check if execute/repl tools are present and if backend supports them
         has_execute_tool = any((tool.name if hasattr(tool, "name") else tool.get("name")) == "execute" for tool in request.tools)
+        has_repl_tool = any((tool.name if hasattr(tool, "name") else tool.get("name")) == "repl" for tool in request.tools)
 
         backend_supports_execution = False
-        if has_execute_tool:
-            # Resolve backend to check execution support
+        backend_supports_repl = False
+        if has_execute_tool or has_repl_tool:
             backend = self._get_backend(request.runtime)  # ty: ignore[invalid-argument-type]
-            backend_supports_execution = _supports_execution(backend)
 
-            # If execute tool exists but backend doesn't support it, filter it out
-            if not backend_supports_execution:
-                filtered_tools = [tool for tool in request.tools if (tool.name if hasattr(tool, "name") else tool.get("name")) != "execute"]
-                request = request.override(tools=filtered_tools)
-                has_execute_tool = False
+            if has_execute_tool:
+                backend_supports_execution = _supports_execution(backend)
+                if not backend_supports_execution:
+                    filtered_tools = [
+                        tool for tool in request.tools if (tool.name if hasattr(tool, "name") else tool.get("name")) != "execute"
+                    ]
+                    request = request.override(tools=filtered_tools)
+                    has_execute_tool = False
+
+            if has_repl_tool:
+                backend_supports_repl = _supports_repl(backend)
+                if not backend_supports_repl:
+                    filtered_tools = [tool for tool in request.tools if (tool.name if hasattr(tool, "name") else tool.get("name")) != "repl"]
+                    request = request.override(tools=filtered_tools)
+                    has_repl_tool = False
 
         # Use custom system prompt if provided, otherwise generate dynamically
         if self._custom_system_prompt is not None:
@@ -1060,6 +1204,9 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
             # Add execution instructions if execute tool is available
             if has_execute_tool and backend_supports_execution:
                 prompt_parts.append(EXECUTION_SYSTEM_PROMPT)
+
+            if has_repl_tool and backend_supports_repl:
+                prompt_parts.append(REPL_SYSTEM_PROMPT)
 
             system_prompt = "\n\n".join(prompt_parts).strip()
 
