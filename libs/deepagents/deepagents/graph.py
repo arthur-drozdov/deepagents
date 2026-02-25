@@ -225,8 +225,7 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
         if "runnable" in spec:
             processed_subagents.append(spec)
         else:
-            subagent_model = spec.get("model", model)
-            if isinstance(subagent_model, str):
+            if isinstance(subagent_model := spec.get("model", model), str):
                 subagent_model = init_chat_model(subagent_model)
 
             subagent_summarization_defaults = _compute_summarization_defaults(subagent_model)
@@ -244,8 +243,7 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
                 AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
                 PatchToolCallsMiddleware(),
             ]
-            subagent_skills = spec.get("skills")
-            if subagent_skills:
+            if subagent_skills := spec.get("skills"):
                 subagent_middleware.append(SkillsMiddleware(backend=backend, sources=subagent_skills))
             subagent_middleware.extend(spec.get("middleware", []))
 
@@ -257,11 +255,11 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
             }
             processed_subagents.append(processed_spec)
 
-    all_subagents: list[SubAgent | CompiledSubAgent] = (
-        processed_subagents
-        if any(spec["name"] == GENERAL_PURPOSE_SUBAGENT["name"] for spec in processed_subagents)
-        else [general_purpose_spec, *processed_subagents]
-    )
+    # Combine GP with processed user-provided subagents
+    if any(spec["name"] == GENERAL_PURPOSE_SUBAGENT["name"] for spec in processed_subagents):
+        all_subagents: list[SubAgent | CompiledSubAgent] = processed_subagents
+    else:
+        all_subagents = [general_purpose_spec, *processed_subagents]
 
     # Build main agent middleware stack
     deepagent_middleware: list[AgentMiddleware[Any, Any, Any]] = [
