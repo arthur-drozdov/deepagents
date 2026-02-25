@@ -1,7 +1,7 @@
 """Deep Agents come with planning, filesystem, and subagents."""
 
 from collections.abc import Callable, Sequence
-from typing import Any, cast
+from typing import Any
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware, InterruptOnConfig, TodoListMiddleware
@@ -79,7 +79,7 @@ def get_default_model() -> ChatAnthropic:
     )
 
 
-def create_deep_agent(  # noqa: C901, PLR0912, PLR0915  # Complex graph assembly logic with many conditional branches
+def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic with many conditional branches
     model: str | BaseChatModel | None = None,
     tools: Sequence[BaseTool | Callable | dict[str, Any]] | None = None,
     *,
@@ -192,6 +192,7 @@ def create_deep_agent(  # noqa: C901, PLR0912, PLR0915  # Complex graph assembly
 
     backend = backend if backend is not None else (StateBackend)
 
+    # Build general-purpose subagent with default middleware stack
     gp_middleware: list[AgentMiddleware[Any, Any, Any]] = [
         TodoListMiddleware(),
         FilesystemMiddleware(backend=backend),
@@ -211,16 +212,14 @@ def create_deep_agent(  # noqa: C901, PLR0912, PLR0915  # Complex graph assembly
     if interrupt_on is not None:
         gp_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
 
-    general_purpose_spec = cast(
-        "SubAgent",
-        {
-            **GENERAL_PURPOSE_SUBAGENT,
-            "model": model,
-            "tools": tools or [],
-            "middleware": gp_middleware,
-        },
-    )
+    general_purpose_spec: SubAgent = {  # ty: ignore[missing-typed-dict-key]
+        **GENERAL_PURPOSE_SUBAGENT,
+        "model": model,
+        "tools": tools or [],
+        "middleware": gp_middleware,
+    }
 
+    # Process user-provided subagents to fill in defaults for model, tools, and middleware
     processed_subagents: list[SubAgent | CompiledSubAgent] = []
     for spec in subagents or []:
         if "runnable" in spec:
@@ -258,14 +257,11 @@ def create_deep_agent(  # noqa: C901, PLR0912, PLR0915  # Complex graph assembly
             }
             processed_subagents.append(processed_spec)
 
-    override_index = next(
-        (index for index, spec in enumerate(processed_subagents) if spec["name"] == GENERAL_PURPOSE_SUBAGENT["name"]),
-        None,
+    all_subagents: list[SubAgent | CompiledSubAgent] = (
+        processed_subagents
+        if any(spec["name"] == GENERAL_PURPOSE_SUBAGENT["name"] for spec in processed_subagents)
+        else [general_purpose_spec, *processed_subagents]
     )
-    if override_index is not None:
-        general_purpose_spec = processed_subagents.pop(override_index)
-
-    all_subagents: list[SubAgent | CompiledSubAgent] = [general_purpose_spec, *processed_subagents]
 
     # Build main agent middleware stack
     deepagent_middleware: list[AgentMiddleware[Any, Any, Any]] = [
