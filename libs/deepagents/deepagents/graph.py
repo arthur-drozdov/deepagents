@@ -192,12 +192,37 @@ def create_deep_agent(  # noqa: C901, PLR0912, PLR0915  # Complex graph assembly
 
     backend = backend if backend is not None else (StateBackend)
 
-    general_purpose_override: SubAgent | CompiledSubAgent | None = None
+    gp_middleware: list[AgentMiddleware[Any, Any, Any]] = [
+        TodoListMiddleware(),
+        FilesystemMiddleware(backend=backend),
+        SummarizationMiddleware(
+            model=model,
+            backend=backend,
+            trigger=summarization_defaults["trigger"],
+            keep=summarization_defaults["keep"],
+            trim_tokens_to_summarize=None,
+            truncate_args_settings=summarization_defaults["truncate_args_settings"],
+        ),
+        AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
+        PatchToolCallsMiddleware(),
+    ]
+    if skills is not None:
+        gp_middleware.append(SkillsMiddleware(backend=backend, sources=skills))
+    if interrupt_on is not None:
+        gp_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
+
+    general_purpose_spec = cast(
+        "SubAgent",
+        {
+            **GENERAL_PURPOSE_SUBAGENT,
+            "model": model,
+            "tools": tools or [],
+            "middleware": gp_middleware,
+        },
+    )
+
     processed_subagents: list[SubAgent | CompiledSubAgent] = []
     for spec in subagents or []:
-        if spec["name"] == GENERAL_PURPOSE_SUBAGENT["name"]:
-            general_purpose_override = spec
-            continue
         if "runnable" in spec:
             processed_subagents.append(spec)
         else:
@@ -233,75 +258,12 @@ def create_deep_agent(  # noqa: C901, PLR0912, PLR0915  # Complex graph assembly
             }
             processed_subagents.append(processed_spec)
 
-    if general_purpose_override is None:
-        gp_model = model
-        gp_summarization_defaults = _compute_summarization_defaults(gp_model)
-        gp_middleware: list[AgentMiddleware[Any, Any, Any]] = [
-            TodoListMiddleware(),
-            FilesystemMiddleware(backend=backend),
-            SummarizationMiddleware(
-                model=gp_model,
-                backend=backend,
-                trigger=gp_summarization_defaults["trigger"],
-                keep=gp_summarization_defaults["keep"],
-                trim_tokens_to_summarize=None,
-                truncate_args_settings=gp_summarization_defaults["truncate_args_settings"],
-            ),
-            AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
-            PatchToolCallsMiddleware(),
-        ]
-        if skills is not None:
-            gp_middleware.append(SkillsMiddleware(backend=backend, sources=skills))
-        if interrupt_on is not None:
-            gp_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
-
-        general_purpose_spec = cast(
-            "SubAgent",
-            {
-                **GENERAL_PURPOSE_SUBAGENT,
-                "model": gp_model,
-                "tools": tools or [],
-                "middleware": gp_middleware,
-            },
-        )
-    elif "runnable" in general_purpose_override:
-        general_purpose_spec = general_purpose_override
-    else:
-        gp_model = general_purpose_override.get("model", model)
-        if isinstance(gp_model, str):
-            gp_model = init_chat_model(gp_model)
-
-        gp_summarization_defaults = _compute_summarization_defaults(gp_model)
-        gp_middleware = [
-            TodoListMiddleware(),
-            FilesystemMiddleware(backend=backend),
-            SummarizationMiddleware(
-                model=gp_model,
-                backend=backend,
-                trigger=gp_summarization_defaults["trigger"],
-                keep=gp_summarization_defaults["keep"],
-                trim_tokens_to_summarize=None,
-                truncate_args_settings=gp_summarization_defaults["truncate_args_settings"],
-            ),
-            AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
-            PatchToolCallsMiddleware(),
-        ]
-        gp_skills = general_purpose_override.get("skills") if "skills" in general_purpose_override else skills
-        if gp_skills:
-            gp_middleware.append(SkillsMiddleware(backend=backend, sources=gp_skills))
-        if interrupt_on is not None:
-            gp_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
-        gp_middleware.extend(general_purpose_override.get("middleware", []))
-
-        general_purpose_spec = cast(
-            "SubAgent",
-            {
-                **general_purpose_override,
-                "model": gp_model,
-                "tools": general_purpose_override.get("tools", tools or []),
-                "middleware": gp_middleware,
-            },
-        )
+    override_index = next(
+        (index for index, spec in enumerate(processed_subagents) if spec["name"] == GENERAL_PURPOSE_SUBAGENT["name"]),
+        None,
+    )
+    if override_index is not None:
+        general_purpose_spec = processed_subagents.pop(override_index)
 
     all_subagents: list[SubAgent | CompiledSubAgent] = [general_purpose_spec, *processed_subagents]
 
