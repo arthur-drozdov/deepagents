@@ -274,7 +274,7 @@ class TestV2LoadsV1CheckpointStateBackend:
         """V2 backend can read files from a v1-era checkpoint."""
         v1_data = self._make_v1_file_data("hello\nworld")
         rt = _make_state_runtime(files={"/old/file.txt": v1_data})
-        be = StateBackend(rt)  # default file_format="v2"
+        be = StateBackend(rt, file_format="v2")
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -291,7 +291,7 @@ class TestV2LoadsV1CheckpointStateBackend:
         """
         v1_data = self._make_v1_file_data("foo\nbar\nbaz")
         rt = _make_state_runtime(files={"/old/code.py": v1_data})
-        be = StateBackend(rt)  # v2 mode
+        be = StateBackend(rt, file_format="v2")
 
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
@@ -311,7 +311,7 @@ class TestV2LoadsV1CheckpointStateBackend:
         """V2 backend can grep through v1-era checkpoint data."""
         v1_data = self._make_v1_file_data("def foo():\n    return 1\ndef bar():\n    return 2")
         rt = _make_state_runtime(files={"/src/funcs.py": v1_data})
-        be = StateBackend(rt)  # v2 mode
+        be = StateBackend(rt, file_format="v2")
 
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
@@ -326,7 +326,7 @@ class TestV2LoadsV1CheckpointStateBackend:
         """V2 backend can download v1-era checkpoint data as bytes."""
         v1_data = self._make_v1_file_data("alpha\nbeta\ngamma")
         rt = _make_state_runtime(files={"/data.csv": v1_data})
-        be = StateBackend(rt)  # v2 mode
+        be = StateBackend(rt, file_format="v2")
 
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
@@ -340,7 +340,7 @@ class TestV2LoadsV1CheckpointStateBackend:
         """V2 backend can list v1-era checkpoint data."""
         v1_data = self._make_v1_file_data("some content")
         rt = _make_state_runtime(files={"/dir/file.txt": v1_data})
-        be = StateBackend(rt)  # v2 mode
+        be = StateBackend(rt, file_format="v2")
 
         infos = be.ls_info("/dir")
         assert len(infos) == 1
@@ -353,7 +353,7 @@ class TestV2LoadsV1CheckpointStateBackend:
         v1_py = self._make_v1_file_data("print('hi')")
         v1_txt = self._make_v1_file_data("notes")
         rt = _make_state_runtime(files={"/src/a.py": v1_py, "/src/b.txt": v1_txt})
-        be = StateBackend(rt)  # v2 mode
+        be = StateBackend(rt, file_format="v2")
 
         infos = be.glob_info("**/*.py", path="/")
         paths = [fi["path"] for fi in infos]
@@ -364,7 +364,7 @@ class TestV2LoadsV1CheckpointStateBackend:
         """V2 backend can write new v2 files alongside v1 checkpoint data."""
         v1_data = self._make_v1_file_data("old content")
         rt = _make_state_runtime(files={"/old/file.txt": v1_data})
-        be = StateBackend(rt)  # v2 mode
+        be = StateBackend(rt, file_format="v2")
 
         result = be.write("/new/file.txt", "new content")
         assert result.error is None
@@ -452,7 +452,7 @@ class TestV2LoadsV1CheckpointStoreBackend:
         ns = ("fs",)
         self._seed_v1_store_item(rt.store, ns, "/old/file.txt", "hello\nworld")
 
-        be = StoreBackend(rt, namespace=lambda _ctx: ns)  # v2 mode
+        be = StoreBackend(rt, namespace=lambda _ctx: ns, file_format="v2")
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -471,7 +471,7 @@ class TestV2LoadsV1CheckpointStoreBackend:
         ns = ("fs",)
         self._seed_v1_store_item(rt.store, ns, "/code.py", "foo\nbar\nbaz")
 
-        be = StoreBackend(rt, namespace=lambda _ctx: ns)  # v2 mode
+        be = StoreBackend(rt, namespace=lambda _ctx: ns, file_format="v2")
 
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
@@ -526,7 +526,7 @@ class TestV2LoadsV1CheckpointStoreBackend:
         self._seed_v1_store_item(rt.store, ns, "/config.env", "DB_HOST=localhost\nDB_PORT=5432")
         self._seed_v1_store_item(rt.store, ns, "/src/db.py", "def connect():\n    pass")
 
-        be = StoreBackend(rt, namespace=lambda _ctx: ns)  # v2 mode
+        be = StoreBackend(rt, namespace=lambda _ctx: ns, file_format="v2")
 
         # Read v1 data
         with warnings.catch_warnings(record=True):
@@ -625,7 +625,7 @@ class TestBareV1DataNoEncodingField:
             "modified_at": "2024-06-01T00:00:00+00:00",
         }
         rt = _make_state_runtime(files={"/legacy.txt": bare_v1})
-        be = StateBackend(rt)
+        be = StateBackend(rt, file_format="v2")
 
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")

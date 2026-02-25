@@ -127,7 +127,7 @@ def test_new_format_no_warning():
 
 def test_store_upload_binary():
     rt = _make_store_runtime()
-    be = StoreBackend(rt, namespace=lambda _ctx: ("filesystem",))
+    be = StoreBackend(rt, namespace=lambda _ctx: ("filesystem",), file_format="v2")
 
     png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
     responses = be.upload_files([("/images/test.png", png_bytes)])
@@ -150,7 +150,7 @@ def test_store_upload_binary():
 
 def test_store_upload_download_binary_round_trip():
     rt = _make_store_runtime()
-    be = StoreBackend(rt, namespace=lambda _ctx: ("filesystem",))
+    be = StoreBackend(rt, namespace=lambda _ctx: ("filesystem",), file_format="v2")
 
     original_bytes = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
     be.upload_files([("/images/photo.png", original_bytes)])
@@ -168,7 +168,7 @@ def test_store_upload_download_binary_round_trip():
 
 def test_store_upload_text():
     rt = _make_store_runtime()
-    be = StoreBackend(rt, namespace=lambda _ctx: ("filesystem",))
+    be = StoreBackend(rt, namespace=lambda _ctx: ("filesystem",), file_format="v2")
 
     text_bytes = b"Hello, world!\nLine 2"
     responses = be.upload_files([("/docs/readme.txt", text_bytes)])
@@ -301,7 +301,7 @@ def test_grep_legacy_format():
 def test_store_upload_utf8_content_stored_as_text():
     """Valid utf-8 bytes are stored with encoding='utf-8'."""
     rt = _make_store_runtime()
-    be = StoreBackend(rt, namespace=lambda _ctx: ("filesystem",))
+    be = StoreBackend(rt, namespace=lambda _ctx: ("filesystem",), file_format="v2")
 
     be.upload_files([("/docs/notes.txt", b"Hello, world!")])
 
@@ -313,7 +313,7 @@ def test_store_upload_utf8_content_stored_as_text():
 def test_store_upload_non_utf8_content_stored_as_base64():
     """Non-utf-8 bytes are stored with encoding='base64'."""
     rt = _make_store_runtime()
-    be = StoreBackend(rt, namespace=lambda _ctx: ("filesystem",))
+    be = StoreBackend(rt, namespace=lambda _ctx: ("filesystem",), file_format="v2")
 
     raw = b"\x89PNG\r\n\x1a\n" + b"\xff\xfe" + b"\x00" * 20
     be.upload_files([("/images/photo.png", raw)])

@@ -45,17 +45,16 @@ class StateBackend(BackendProtocol):
         self,
         runtime: "ToolRuntime",
         *,
-        file_format: FileFormat = "v2",
+        file_format: FileFormat = "v1",
     ) -> None:
         r"""Initialize StateBackend with runtime.
 
         Args:
             runtime: The ToolRuntime instance providing store access and configuration.
-            file_format: Storage format version. `"v2"` (default) stores
-                content as a plain `str` with an `encoding` field.
-                `"v1"` stores content as `list[str]` (lines split on
-                `\\n`) without an `encoding` field, for consumers that
-                expect the legacy format.
+            file_format: Storage format version. `"v1"` (default) stores
+                content as `list[str]` (lines split on `\\n`) without an
+                `encoding` field.  `"v2"` stores content as a plain `str`
+                with an `encoding` field.
         """
         self.runtime = runtime
         self._file_format = file_format

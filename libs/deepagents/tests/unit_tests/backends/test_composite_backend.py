@@ -394,7 +394,8 @@ def test_composite_backend_intercept_large_tool_result():
 
     assert isinstance(result, Command)
     assert "/large_tool_results/test_789" in result.update["files"]
-    assert result.update["files"]["/large_tool_results/test_789"]["content"] == large_content
+    # v1 format stores content as list[str]
+    assert result.update["files"]["/large_tool_results/test_789"]["content"] == [large_content]
     assert "Tool result too large" in result.update["messages"][0].content
 
 
@@ -417,7 +418,8 @@ def test_composite_backend_intercept_large_tool_result_routed_to_store():
 
     stored_item = rt.store.get(("filesystem",), "/test_routed_123")
     assert stored_item is not None
-    assert stored_item.value["content"] == large_content
+    # v1 format stores content as list[str]
+    assert stored_item.value["content"] == [large_content]
 
 
 # Mock sandbox backend for testing execute functionality

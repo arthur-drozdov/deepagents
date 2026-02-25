@@ -1074,11 +1074,12 @@ class TestFilesystemMiddleware:
         assert isinstance(result, Command)
         # Check that the file contains actual text, not stringified dict
         file_content = result.update["files"]["/large_tool_results/test_single"]["content"]
-        # Content is now stored as a plain string
-        assert isinstance(file_content, str)
+        # v1 format stores content as list[str]
+        assert isinstance(file_content, list)
+        joined = "\n".join(file_content)
         # Should start with the actual text, not with "[{" which would indicate stringified dict
-        assert file_content.startswith("Hello world!")
-        assert not file_content.startswith("[{")
+        assert joined.startswith("Hello world!")
+        assert not joined.startswith("[{")
 
     def test_multiple_text_blocks_stringifies_structure(self):
         """Test that multiple text blocks stringify entire structure."""
@@ -1097,10 +1098,11 @@ class TestFilesystemMiddleware:
         assert isinstance(result, Command)
         # Check that the file contains stringified structure (starts with "[")
         file_content = result.update["files"]["/large_tool_results/test_multi"]["content"]
-        # Content is now stored as a plain string
-        assert isinstance(file_content, str)
+        # v1 format stores content as list[str]
+        assert isinstance(file_content, list)
+        joined = "\n".join(file_content)
         # Should be stringified list of dicts
-        assert file_content.startswith("[{")
+        assert joined.startswith("[{")
 
     def test_mixed_content_blocks_stringifies_all(self):
         """Test that mixed content block types (text + image) stringify entire structure."""
@@ -1119,12 +1121,13 @@ class TestFilesystemMiddleware:
         assert isinstance(result, Command)
         # Check that the file contains stringified structure
         file_content = result.update["files"]["/large_tool_results/test_mixed"]["content"]
-        # Content is now stored as a plain string
-        assert isinstance(file_content, str)
-        assert file_content.startswith("[{")
+        # v1 format stores content as list[str]
+        assert isinstance(file_content, list)
+        joined = "\n".join(file_content)
+        assert joined.startswith("[{")
         # Should contain both blocks in the stringified output
-        assert "'type': 'text'" in file_content
-        assert "'type': 'image'" in file_content
+        assert "'type': 'text'" in joined
+        assert "'type': 'image'" in joined
 
     def test_read_file_image_returns_standard_image_content_block(self):
         """Test image reads return standard image blocks with base64 + mime_type."""

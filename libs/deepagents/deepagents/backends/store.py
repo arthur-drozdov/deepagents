@@ -112,7 +112,7 @@ class StoreBackend(BackendProtocol):
         runtime: "ToolRuntime",
         *,
         namespace: NamespaceFactory | None = None,
-        file_format: FileFormat = "v2",
+        file_format: FileFormat = "v1",
     ) -> None:
         r"""Initialize StoreBackend with runtime.
 
@@ -128,11 +128,10 @@ class StoreBackend(BackendProtocol):
                 !!!! Warning:
                     This API is subject to change in a minor version.
 
-            file_format: Storage format version. `"v2"` (default) stores
-                content as a plain `str` with an `encoding` field.
-                `"v1"` stores content as `list[str]` (lines split on
-                `\\n`) without an `encoding` field, for consumers that
-                expect the legacy format.
+            file_format: Storage format version. `"v1"` (default) stores
+                content as `list[str]` (lines split on `\\n`) without an
+                `encoding` field.  `"v2"` stores content as a plain `str`
+                with an `encoding` field.
 
         Example:
                     namespace=lambda ctx: ("filesystem", ctx.runtime.context.user_id)
