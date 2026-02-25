@@ -223,11 +223,15 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
     processed_subagents: list[SubAgent | CompiledSubAgent] = []
     for spec in subagents or []:
         if "runnable" in spec:
+            # CompiledSubAgent - use as-is
             processed_subagents.append(spec)
         else:
-            if isinstance(subagent_model := spec.get("model", model), str):
+            # SubAgent - fill in defaults and prepend base middleware
+            subagent_model = spec.get("model", model)
+            if isinstance(subagent_model, str):
                 subagent_model = init_chat_model(subagent_model)
 
+            # Build middleware: base stack + skills (if specified) + user's middleware
             subagent_summarization_defaults = _compute_summarization_defaults(subagent_model)
             subagent_middleware: list[AgentMiddleware[Any, Any, Any]] = [
                 TodoListMiddleware(),
@@ -243,7 +247,8 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
                 AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
                 PatchToolCallsMiddleware(),
             ]
-            if subagent_skills := spec.get("skills"):
+            subagent_skills = spec.get("skills")
+            if subagent_skills:
                 subagent_middleware.append(SkillsMiddleware(backend=backend, sources=subagent_skills))
             subagent_middleware.extend(spec.get("middleware", []))
 
@@ -255,10 +260,12 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
             }
             processed_subagents.append(processed_spec)
 
-    # Combine GP with processed user-provided subagents
     if any(spec["name"] == GENERAL_PURPOSE_SUBAGENT["name"] for spec in processed_subagents):
+        # If an agent with general purpose name already exists in subagents, then don't add it
+        # This is how you overwrite/configure general purpose subagent
         all_subagents: list[SubAgent | CompiledSubAgent] = processed_subagents
     else:
+        # Otherwise - add it!
         all_subagents = [general_purpose_spec, *processed_subagents]
 
     # Build main agent middleware stack
