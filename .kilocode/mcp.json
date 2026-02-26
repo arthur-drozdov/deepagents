@@ -1,0 +1,1 @@
+{"mcpServers":{"docs-langchain":{"url":"https://docs.langchain.com/mcp","type":"streamable-http","alwaysAllow":["SearchDocsByLangChain"]},"docs-copilotkit":{"url":"https://mcp.copilotkit.ai","type":"streamable-http","alwaysAllow":["search-code","search-docs"]}}}

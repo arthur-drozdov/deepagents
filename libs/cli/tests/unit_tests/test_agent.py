@@ -492,6 +492,7 @@ class TestCreateCliAgentSkillsSources:
             patch("deepagents_cli.agent.SkillsMiddleware", FakeSkillsMiddleware),
             patch("deepagents_cli.agent.MemoryMiddleware"),
             patch("deepagents_cli.agent.create_deep_agent", return_value=mock_agent),
+            patch("langchain.chat_models.init_chat_model", return_value=Mock()),
         ):
             create_cli_agent(
                 model="fake-model",
@@ -561,6 +562,7 @@ class TestCreateCliAgentMemorySources:
                 "deepagents_cli.agent.create_deep_agent",
                 return_value=mock_agent,
             ),
+            patch("langchain.chat_models.init_chat_model", return_value=Mock()),
         ):
             create_cli_agent(
                 model="fake-model",
@@ -622,6 +624,7 @@ class TestCreateCliAgentMemorySources:
                 "deepagents_cli.agent.create_deep_agent",
                 return_value=mock_agent,
             ),
+            patch("langchain.chat_models.init_chat_model", return_value=Mock()),
         ):
             create_cli_agent(
                 model="fake-model",
