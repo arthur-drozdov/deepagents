@@ -12,12 +12,14 @@ from PIL import Image
 
 from deepagents_cli.image_utils import (
     ImageData,
+    VideoData,
     create_multimodal_content,
     encode_image_to_base64,
     get_clipboard_image,
     get_image_from_path,
+    get_video_from_path,
 )
-from deepagents_cli.input import ImageTracker
+from deepagents_cli.input import ImageTracker, MediaTracker
 
 
 class TestImageData:
@@ -358,3 +360,256 @@ class TestSyncToTextWithIDGaps:
         assert tracker.images[0].placeholder == "[image 1]"
         assert tracker.images[1].placeholder == "[image 3]"
         assert tracker.next_id == 4
+
+
+class TestVideoData:
+    """Tests for VideoData dataclass."""
+
+    def test_to_message_content_mp4(self) -> None:
+        """Test converting MP4 video data to OpenAI-compatible format."""
+        video = VideoData(
+            base64_data="AAAAIGZ0eXBtcDQyAAAAAGlzb21tcDQyAAACAGlzb2...",
+            format="mp4",
+            placeholder="[video 1]",
+        )
+        result = video.to_message_content()
+
+        assert result["type"] == "video_url"
+        assert "video_url" in result
+        assert result["video_url"]["url"].startswith("data:video/mp4;base64,")
+
+    def test_to_message_content_mov(self) -> None:
+        """Test converting MOV video data to OpenAI-compatible format."""
+        video = VideoData(
+            base64_data="abc123",
+            format="quicktime",
+            placeholder="[video 2]",
+        )
+        result = video.to_message_content()
+
+        assert result["type"] == "video_url"
+        assert result["video_url"]["url"].startswith("data:video/quicktime;base64,")
+
+
+class TestGetVideoFromPath:
+    """Tests for loading video files from disk."""
+
+    def test_get_video_from_path_mp4(self, tmp_path: Path) -> None:
+        """Valid MP4 files should be returned as VideoData."""
+        # Create a minimal valid MP4 file (ftyp box)
+        mp4_content = (
+            b"\x00\x00\x00\x14"  # box size (20 bytes)
+            b"ftyp"  # box type
+            b"mp42"  # major brand
+            b"\x00\x00\x00\x00"  # minor version
+            b"mp42"  # compatible brand
+        )
+        video_path = tmp_path / "test.mp4"
+        video_path.write_bytes(mp4_content)
+
+        result = get_video_from_path(video_path)
+
+        assert result is not None
+        assert result.format == "mp4"
+        assert result.placeholder == "[video]"
+        assert base64.b64decode(result.base64_data) == mp4_content
+
+    def test_get_video_from_path_jpg_returns_none(self, tmp_path: Path) -> None:
+        """Non-video files should return None."""
+        file_path = tmp_path / "test.jpg"
+        file_path.write_bytes(b"fake jpg content")
+
+        assert get_video_from_path(file_path) is None
+
+    def test_get_video_from_path_txt_returns_none(self, tmp_path: Path) -> None:
+        """Text files should return None."""
+        file_path = tmp_path / "test.txt"
+        file_path.write_bytes(b"not a video")
+
+        assert get_video_from_path(file_path) is None
+
+    def test_get_video_from_path_missing_returns_none(self, tmp_path: Path) -> None:
+        """Missing files should return None."""
+        file_path = tmp_path / "missing.mp4"
+        assert get_video_from_path(file_path) is None
+
+    def test_get_video_from_path_mov(self, tmp_path: Path) -> None:
+        """MOV files should be detected correctly."""
+        # MOV files also use ftyp
+        mov_content = (
+            b"\x00\x00\x00\x14"  # box size
+            b"ftyp"  # box type
+            b"qt  "  # major brand (QuickTime)
+            b"\x00\x00\x00\x00"  # minor version
+            b"qt  "  # compatible brand
+        )
+        video_path = tmp_path / "test.mov"
+        video_path.write_bytes(mov_content)
+
+        result = get_video_from_path(video_path)
+
+        assert result is not None
+        assert result.format == "quicktime"
+
+
+class TestMediaTrackerVideo:
+    """Tests for MediaTracker video functionality."""
+
+    def test_add_video_increments_counter(self) -> None:
+        """Test that adding videos increments the video counter correctly."""
+        tracker = MediaTracker()
+
+        vid1 = VideoData(base64_data="abc", format="mp4", placeholder="")
+        vid2 = VideoData(base64_data="def", format="mp4", placeholder="")
+
+        placeholder1 = tracker.add_video(vid1)
+        placeholder2 = tracker.add_video(vid2)
+
+        assert placeholder1 == "[video 1]"
+        assert placeholder2 == "[video 2]"
+        assert vid1.placeholder == "[video 1]"
+        assert vid2.placeholder == "[video 2]"
+
+    def test_get_videos_returns_copy(self) -> None:
+        """Test that get_videos returns a copy, not the original list."""
+        tracker = MediaTracker()
+        vid = VideoData(base64_data="abc", format="mp4", placeholder="")
+        tracker.add_video(vid)
+
+        videos = tracker.get_videos()
+        videos.clear()  # Modify the returned list
+
+        # Original should be unchanged
+        assert len(tracker.get_videos()) == 1
+
+    def test_clear_resets_video_counter(self) -> None:
+        """Test that clear resets both videos and video counter."""
+        tracker = MediaTracker()
+        vid = VideoData(base64_data="abc", format="mp4", placeholder="")
+        tracker.add_video(vid)
+        tracker.add_video(vid)
+
+        assert tracker.next_video_id == 3
+        assert len(tracker.videos) == 2
+
+        tracker.clear()
+
+        assert tracker.next_video_id == 1
+        assert len(tracker.videos) == 0
+
+    def test_add_video_after_clear_starts_at_one(self) -> None:
+        """Test that adding video after clear starts from [video 1] again."""
+        tracker = MediaTracker()
+        vid = VideoData(base64_data="abc", format="mp4", placeholder="")
+
+        tracker.add_video(vid)
+        tracker.add_video(vid)
+        tracker.clear()
+
+        new_vid = VideoData(base64_data="xyz", format="mp4", placeholder="")
+        placeholder = tracker.add_video(new_vid)
+
+        assert placeholder == "[video 1]"
+
+    def test_sync_to_text_prunes_unreferenced_videos(self) -> None:
+        """Sync should prune unreferenced videos while preserving video ID order."""
+        tracker = MediaTracker()
+
+        vid1 = VideoData(base64_data="abc", format="mp4", placeholder="")
+        vid2 = VideoData(base64_data="def", format="mp4", placeholder="")
+
+        tracker.add_video(vid1)
+        tracker.add_video(vid2)
+        tracker.sync_to_text("keep [video 2] only")
+
+        assert tracker.next_video_id == 3
+        assert len(tracker.videos) == 1
+        assert tracker.videos[0].placeholder == "[video 2]"
+
+    def test_image_and_video_tracking_work_together(self) -> None:
+        """Test that images and videos can be tracked independently."""
+        tracker = MediaTracker()
+
+        img = ImageData(base64_data="img", format="png", placeholder="")
+        vid = VideoData(base64_data="vid", format="mp4", placeholder="")
+
+        img_placeholder = tracker.add_image(img)
+        vid_placeholder = tracker.add_video(vid)
+
+        assert img_placeholder == "[image 1]"
+        assert vid_placeholder == "[video 1]"
+        assert len(tracker.images) == 1
+        assert len(tracker.videos) == 1
+
+    def test_sync_to_text_handles_both_images_and_videos(self) -> None:
+        """Sync should handle both image and video placeholders."""
+        tracker = MediaTracker()
+
+        img = ImageData(base64_data="img", format="png", placeholder="")
+        vid = VideoData(base64_data="vid", format="mp4", placeholder="")
+
+        tracker.add_image(img)
+        tracker.add_video(vid)
+        tracker.sync_to_text("[image 1] and [video 1]")
+
+        assert len(tracker.images) == 1
+        assert len(tracker.videos) == 1
+
+    def test_sync_to_text_clears_all_when_no_placeholders(self) -> None:
+        """Sync with no placeholders should clear both images and videos."""
+        tracker = MediaTracker()
+
+        img = ImageData(base64_data="img", format="png", placeholder="")
+        vid = VideoData(base64_data="vid", format="mp4", placeholder="")
+
+        tracker.add_image(img)
+        tracker.add_video(vid)
+        tracker.sync_to_text("no media here")
+
+        assert len(tracker.images) == 0
+        assert len(tracker.videos) == 0
+        assert tracker.next_image_id == 1
+        assert tracker.next_video_id == 1
+
+
+class TestCreateMultimodalContentWithVideo:
+    """Tests for creating multimodal content with videos."""
+
+    def test_text_and_video(self) -> None:
+        """Test creating content with text and one video."""
+        vid = VideoData(base64_data="abc", format="mp4", placeholder="[video 1]")
+        result = create_multimodal_content("Analyze this:", [], [vid])
+
+        assert len(result) == 2
+        assert result[0]["type"] == "text"
+        assert result[1]["type"] == "video_url"
+
+    def test_text_image_and_video(self) -> None:
+        """Test creating content with text, image, and video."""
+        img = ImageData(base64_data="img", format="png", placeholder="[image 1]")
+        vid = VideoData(base64_data="vid", format="mp4", placeholder="[video 1]")
+        result = create_multimodal_content("Compare:", [img], [vid])
+
+        assert len(result) == 3
+        assert result[0]["type"] == "text"
+        assert result[1]["type"] == "image_url"
+        assert result[2]["type"] == "video_url"
+
+    def test_video_only(self) -> None:
+        """Test that empty text is not included when only video is present."""
+        vid = VideoData(base64_data="vid", format="mp4", placeholder="[video 1]")
+        result = create_multimodal_content("", [], [vid])
+
+        assert len(result) == 1
+        assert result[0]["type"] == "video_url"
+
+    def test_multiple_videos(self) -> None:
+        """Test creating content with multiple videos."""
+        vid1 = VideoData(base64_data="vid1", format="mp4", placeholder="[video 1]")
+        vid2 = VideoData(base64_data="vid2", format="mov", placeholder="[video 2]")
+        result = create_multimodal_content("Compare these videos:", [], [vid1, vid2])
+
+        assert len(result) == 3
+        assert result[0]["type"] == "text"
+        assert result[1]["type"] == "video_url"
+        assert result[2]["type"] == "video_url"

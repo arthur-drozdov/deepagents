@@ -292,12 +292,16 @@ async def execute_task_textual(
     else:
         final_input = prompt_text
 
-    # Include images in the message content
+    # Include images and videos in the message content
     images_to_send = []
+    videos_to_send = []
     if image_tracker:
         images_to_send = image_tracker.get_images()
-    if images_to_send:
-        message_content = create_multimodal_content(final_input, images_to_send)
+        videos_to_send = image_tracker.get_videos()
+    if images_to_send or videos_to_send:
+        message_content = create_multimodal_content(
+            final_input, images_to_send, videos_to_send
+        )
     else:
         message_content = final_input
 
@@ -324,7 +328,7 @@ async def execute_task_textual(
     pending_text_by_namespace: dict[tuple, str] = {}
     assistant_message_by_namespace: dict[tuple, Any] = {}
 
-    # Clear images from tracker after creating the message
+    # Clear media from tracker after creating the message
     if image_tracker:
         image_tracker.clear()
 

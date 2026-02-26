@@ -635,3 +635,87 @@ class TestCreateCliAgentMemorySources:
         sources = captured[0]
         # Only user AGENTS.md, no project paths
         assert sources == [str(agent_dir / "AGENTS.md")]
+
+
+class TestModelProfileInjection:
+    """Test that max_input_tokens is correctly injected into model profiles."""
+
+    def test_profile_injection_on_instantiated_model(self, tmp_path: Path) -> None:
+        """Test profile update when context limit applies to instantiated models."""
+        from langchain_core.language_models.chat_models import BaseChatModel
+
+        mock_settings = Mock()
+        mock_settings.model_context_limit = 50000
+        mock_settings.ensure_agent_dir.return_value = tmp_path / "agent"
+        mock_settings.get_user_agent_md_path.return_value = (
+            tmp_path / " agent" / "AGENTS.md"
+        )
+        mock_settings.get_project_agent_md_path.return_value = []
+        mock_settings.get_user_agents_dir.return_value = tmp_path / "agents"
+        mock_settings.get_project_agents_dir.return_value = None
+
+        mock_model = Mock(spec=BaseChatModel)
+        mock_model.profile = {"name": "test"}
+
+        mock_agent = Mock()
+        mock_agent.with_config.return_value = mock_agent
+
+        with (
+            patch("deepagents_cli.agent.settings", mock_settings),
+            patch(
+                "deepagents_cli.agent.create_deep_agent", return_value=mock_agent
+            ) as mock_create,
+        ):
+            create_cli_agent(
+                model=mock_model,
+                assistant_id="test",
+                enable_memory=False,
+                enable_skills=False,
+                enable_shell=False,
+            )
+
+        # Profile should be updated with max_input_tokens injected post-instantiation
+        assert mock_model.profile["max_input_tokens"] == 50000
+        mock_create.assert_called_once()
+        assert mock_create.call_args.kwargs["model"] == mock_model
+
+    def test_profile_injection_on_string_model(self, tmp_path: Path) -> None:
+        """If model is a string, it should be instantiated with a custom profile."""
+        mock_settings = Mock()
+        mock_settings.model_context_limit = 50000
+        mock_settings.ensure_agent_dir.return_value = tmp_path / "agent"
+        mock_settings.get_user_agent_md_path.return_value = (
+            tmp_path / " agent" / "AGENTS.md"
+        )
+        mock_settings.get_project_agent_md_path.return_value = []
+        mock_settings.get_user_agents_dir.return_value = tmp_path / "agents"
+        mock_settings.get_project_agents_dir.return_value = None
+
+        mock_agent = Mock()
+        mock_agent.with_config.return_value = mock_agent
+        mock_instantiated_model = Mock()
+
+        with (
+            patch("deepagents_cli.agent.settings", mock_settings),
+            patch(
+                "langchain.chat_models.init_chat_model",
+                return_value=mock_instantiated_model,
+            ) as mock_init,
+            patch(
+                "deepagents_cli.agent.create_deep_agent", return_value=mock_agent
+            ) as mock_create,
+        ):
+            create_cli_agent(
+                model="test-model",
+                assistant_id="test",
+                enable_memory=False,
+                enable_skills=False,
+                enable_shell=False,
+            )
+
+        mock_init.assert_called_once_with(
+            "test-model", profile={"max_input_tokens": 50000}
+        )
+        mock_create.assert_called_once()
+        # The model should be the instantiated mock returned by init_chat_model
+        assert mock_create.call_args.kwargs["model"] == mock_instantiated_model

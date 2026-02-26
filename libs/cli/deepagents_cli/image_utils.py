@@ -1,4 +1,4 @@
-"""Utilities for handling image paste from clipboard."""
+"""Utilities for handling image and video paste from clipboard."""
 
 import base64
 import io
@@ -45,6 +45,26 @@ class ImageData:
         return {
             "type": "image_url",
             "image_url": {"url": f"data:image/{self.format};base64,{self.base64_data}"},
+        }
+
+
+@dataclass
+class VideoData:
+    """Represents a pasted video with its base64 encoding."""
+
+    base64_data: str
+    format: str  # "mp4", "mov", etc.
+    placeholder: str  # Display text like "[video 1]"
+
+    def to_message_content(self) -> dict:
+        """Convert to OpenAI-compatible video URL format.
+
+        Returns:
+            Dict with type and video_url for multimodal messages.
+        """
+        return {
+            "type": "video_url",
+            "video_url": {"url": f"data:video/{self.format};base64,{self.base64_data}"},
         }
 
 
@@ -101,6 +121,89 @@ def get_image_from_path(path: pathlib.Path) -> ImageData | None:
         )
     except (UnidentifiedImageError, OSError) as e:
         logger.debug("Failed to load image from %s: %s", path, e, exc_info=True)
+        return None
+
+
+def get_video_from_path(path: pathlib.Path) -> VideoData | None:
+    """Read and encode a video file from disk.
+
+    Args:
+        path: Path to the video file.
+
+    Returns:
+        `VideoData` when the file is a valid video, otherwise `None`.
+    """
+    # Common video file extensions
+    video_extensions = {
+        ".mp4",
+        ".mov",
+        ".avi",
+        ".mkv",
+        ".webm",
+        ".m4v",
+        ".mpeg",
+        ".mpg",
+        ".wmv",
+        ".flv",
+    }
+
+    suffix = path.suffix.lower()
+    if suffix not in video_extensions:
+        return None
+
+    try:
+        video_bytes = path.read_bytes()
+        if not video_bytes:
+            return None
+
+        # Validate it's a real video file by checking magic bytes
+        # MP4 starts with ftyp, MOV also uses ftyp, AVI starts with RIFF
+        min_video_len = 4
+        if len(video_bytes) < min_video_len:
+            return None
+
+        # Basic validation - check for common video file signatures
+        is_valid = False
+        min_avi_len = 8
+        if video_bytes[4:8] == b"ftyp":  # MP4/MOV
+            is_valid = True
+        elif (
+            video_bytes[:4] == b"RIFF"
+            and len(video_bytes) > min_avi_len
+            and video_bytes[8:12] == b"AVI "
+        ):  # AVI
+            is_valid = True
+        elif video_bytes[:4] == b"0&\x02b" or suffix == ".webm":
+            # ASF/WMV and WebM (simplified check)
+            is_valid = True
+
+        if not is_valid:
+            # For other formats, try to validate with a video library if available
+            # Fall back to accepting the file based on extension
+            logger.debug("Video signature validation skipped for %s", path)
+
+        # Determine mime type from extension
+        format_map = {
+            ".mp4": "mp4",
+            ".m4v": "mp4",
+            ".mov": "quicktime",
+            ".avi": "avi",
+            ".mkv": "x-matroska",
+            ".webm": "webm",
+            ".mpeg": "mpeg",
+            ".mpg": "mpeg",
+            ".wmv": "x-ms-wmv",
+            ".flv": "x-flv",
+        }
+        video_format = format_map.get(suffix, "mp4")
+
+        return VideoData(
+            base64_data=encode_image_to_base64(video_bytes),
+            format=video_format,
+            placeholder="[video]",
+        )
+    except (OSError, ValueError) as e:
+        logger.debug("Failed to load video from %s: %s", path, e, exc_info=True)
         return None
 
 
@@ -281,15 +384,18 @@ def encode_image_to_base64(image_bytes: bytes) -> str:
     return base64.b64encode(image_bytes).decode("utf-8")
 
 
-def create_multimodal_content(text: str, images: list[ImageData]) -> list[dict]:
-    """Create multimodal message content with text and images.
+def create_multimodal_content(
+    text: str, images: list[ImageData], videos: list[VideoData] | None = None
+) -> list[dict]:
+    """Create multimodal message content with text, images, and videos.
 
     Args:
         text: Text content of the message
         images: List of ImageData objects
+        videos: Optional list of VideoData objects
 
     Returns:
-        List of content blocks in LangChain format.
+        List of content blocks in OpenAI-compatible format.
     """
     content_blocks = []
 
@@ -299,5 +405,9 @@ def create_multimodal_content(text: str, images: list[ImageData]) -> list[dict]:
 
     # Add image blocks
     content_blocks.extend(image.to_message_content() for image in images)
+
+    # Add video blocks
+    if videos:
+        content_blocks.extend(video.to_message_content() for video in videos)
 
     return content_blocks

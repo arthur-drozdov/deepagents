@@ -1427,6 +1427,12 @@ def create_model(
     if isinstance(profile, dict) and isinstance(profile.get("max_input_tokens"), int):
         context_limit = profile["max_input_tokens"]
 
+    # Override context limit from config if specified
+    if provider:
+        config_max_input_tokens = config.get_max_input_tokens(provider)
+        if config_max_input_tokens is not None:
+            context_limit = config_max_input_tokens
+
     return ModelResult(
         model=model,
         model_name=model_name,
