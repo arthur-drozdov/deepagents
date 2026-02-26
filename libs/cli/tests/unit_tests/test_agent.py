@@ -679,8 +679,8 @@ class TestModelProfileInjection:
         mock_create.assert_called_once()
         assert mock_create.call_args.kwargs["model"] == mock_model
 
-    def test_no_profile_injection_on_string_model(self, tmp_path: Path) -> None:
-        """If model is a string, profile injection should be skipped entirely."""
+    def test_profile_injection_on_string_model(self, tmp_path: Path) -> None:
+        """If model is a string, it should be instantiated with a custom profile."""
         mock_settings = Mock()
         mock_settings.model_context_limit = 50000
         mock_settings.ensure_agent_dir.return_value = tmp_path / "agent"
@@ -693,9 +693,14 @@ class TestModelProfileInjection:
 
         mock_agent = Mock()
         mock_agent.with_config.return_value = mock_agent
+        mock_instantiated_model = Mock()
 
         with (
             patch("deepagents_cli.agent.settings", mock_settings),
+            patch(
+                "langchain.chat_models.init_chat_model",
+                return_value=mock_instantiated_model,
+            ) as mock_init,
             patch(
                 "deepagents_cli.agent.create_deep_agent", return_value=mock_agent
             ) as mock_create,
@@ -708,7 +713,9 @@ class TestModelProfileInjection:
                 enable_shell=False,
             )
 
+        mock_init.assert_called_once_with(
+            "test-model", profile={"max_input_tokens": 50000}
+        )
         mock_create.assert_called_once()
-        # The model should remain a string and not be coerced into an object by the
-        # profile block
-        assert mock_create.call_args.kwargs["model"] == "test-model"
+        # The model should be the instantiated mock returned by init_chat_model
+        assert mock_create.call_args.kwargs["model"] == mock_instantiated_model
