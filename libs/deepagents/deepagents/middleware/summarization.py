@@ -543,19 +543,36 @@ A condensed summary follows:
 
         mw = self
 
-        def sync_compact(runtime: ToolRuntime) -> Command:
-            return mw._run_compact(runtime)
+        def sync_compact(runtime: ToolRuntime, summary: str) -> Command:
+            return mw._run_compact(summary, runtime)
 
-        async def async_compact(runtime: ToolRuntime) -> Command:
-            return await mw._arun_compact(runtime)
+        async def async_compact(runtime: ToolRuntime, summary: str) -> Command:
+            return await mw._arun_compact(summary, runtime)
 
+        # TODO: trim summary argument from tool calls as it's redundant with the  # noqa: TD002, TD003, FIX002
+        # generated summary.
         return StructuredTool.from_function(
             name="compact_conversation",
             description=(
-                "Compact the conversation by summarizing older messages "
-                "into a concise summary. Use this proactively when the "
-                "conversation is getting long to free up context window "
-                "space. This tool takes no arguments."
+                "This tool refreshes your context window to reduce context bloat and costs.\n\n"
+                "You should use the tool when:\n"
+                "- The user asks to move on to a completely new task for which previous context is likely irrelevant.\n"
+                "- You have finished extracting or synthesizing a result and previous working context is no longer needed.\n\n"
+                "Extract the highest quality/most relevant context from the conversation history. "
+                "Structure your summary using these sections:\n\n"
+                "## SESSION INTENT\n"
+                "What is the user's primary goal or request? What overall task are you trying to accomplish? "
+                "This should be concise but complete enough to understand the purpose of the entire session.\n\n"
+                "## SUMMARY\n"
+                "Extract and record all of the most important context from the conversation history. "
+                "Include important choices, conclusions, or strategies determined during this conversation. "
+                "Include the reasoning behind key decisions. Document any rejected options and why they were not pursued.\n\n"
+                "## ARTIFACTS\n"
+                "What artifacts, files, or resources were created, modified, or accessed during this conversation? "
+                "For file modifications, list specific file paths and briefly describe the changes made to each. "
+                "This section prevents silent loss of artifact information.\n\n"
+                "## NEXT STEPS\n"
+                "What specific tasks remain to be completed to achieve the session intent? What should you do next?"
             ),
             func=sync_compact,
             coroutine=async_compact,
@@ -680,10 +697,11 @@ A condensed summary follows:
                     return True
         return False
 
-    def _run_compact(self, runtime: ToolRuntime) -> Command:
+    def _run_compact(self, summary: str, runtime: ToolRuntime) -> Command:
         """Synchronous compact implementation called by the compact tool.
 
         Args:
+            summary: The summary text provided by the model.
             runtime: The `ToolRuntime` injected by the tool node.
 
         Returns:
@@ -704,9 +722,6 @@ A condensed summary follows:
 
         try:
             to_summarize, _ = self._partition_messages(effective, cutoff)
-            # Generate summary before offloading so no backend side effects
-            # occur if the LLM call fails.
-            summary = self._create_summary(to_summarize)
             backend = self._resolve_backend_for_tool(runtime)
             file_path = self._offload_to_backend(backend, to_summarize)
         except Exception as exc:  # tool must return a ToolMessage, not raise
@@ -715,10 +730,11 @@ A condensed summary follows:
 
         return self._build_compact_result(runtime, to_summarize, summary, file_path, event, cutoff)
 
-    async def _arun_compact(self, runtime: ToolRuntime) -> Command:
+    async def _arun_compact(self, summary: str, runtime: ToolRuntime) -> Command:
         """Async variant of `_run_compact`. See that method for details.
 
         Args:
+            summary: The summary text provided by the model.
             runtime: The `ToolRuntime` injected by the tool node.
 
         Returns:
@@ -739,9 +755,6 @@ A condensed summary follows:
 
         try:
             to_summarize, _ = self._partition_messages(effective, cutoff)
-            # Generate summary before offloading so no backend side effects
-            # occur if the LLM call fails.
-            summary = await self._acreate_summary(to_summarize)
             backend = self._resolve_backend_for_tool(runtime)
             file_path = await self._aoffload_to_backend(backend, to_summarize)
         except Exception as exc:  # tool must return a ToolMessage, not raise
