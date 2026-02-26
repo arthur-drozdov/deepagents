@@ -569,25 +569,30 @@ def create_cli_agent(
     # Use provided checkpointer or fallback to InMemorySaver
     final_checkpointer = checkpointer if checkpointer is not None else InMemorySaver()
 
-    # Inject configured max_input_tokens into the model profile so that the
-    # summarization middleware computes fraction-based defaults instead of fixed tokens
-    if isinstance(model, str):
-        from langchain.chat_models import init_chat_model
+    # If a context limit is configured in settings, inject it as `max_input_tokens`
+    # into the model profile. This allows the summarization middleware to compute
+    # fraction-based defaults instead of fixed tokens (crucial for subagents).
+    if settings.model_context_limit:
+        # The `model` parameter might be a string representing the model name
+        # (e.g., in unit tests or when passed directly from CLI flags).
+        # We must instantiate it into a BaseChatModel to attach the `profile` attribute.
+        if isinstance(model, str):
+            from langchain.chat_models import init_chat_model
 
-        if model.startswith("openai:"):
-            model = init_chat_model(model, use_responses_api=True)
-        else:
             model = init_chat_model(model)
 
-    if getattr(model, "profile", None) is None:
-        import contextlib
+        # Ensure the model object has a `profile` dictionary attribute.
+        # Some model classes do not allow adding new attributes or might
+        # raise errors when setting unknown attributes, so we suppress exceptions.
+        if getattr(model, "profile", None) is None:
+            import contextlib
 
-        with contextlib.suppress(Exception):
-            model.profile = {}
+            with contextlib.suppress(Exception):
+                model.profile = {}
 
-    profile = getattr(model, "profile", None)
-    if isinstance(profile, dict) and settings.model_context_limit:
-        profile["max_input_tokens"] = settings.model_context_limit
+        profile = getattr(model, "profile", None)
+        if isinstance(profile, dict):
+            profile["max_input_tokens"] = settings.model_context_limit
 
     agent = create_deep_agent(
         model=model,
