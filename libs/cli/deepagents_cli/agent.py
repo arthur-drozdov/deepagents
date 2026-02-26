@@ -374,6 +374,7 @@ def create_cli_agent(
     assistant_id: str,
     *,
     tools: Sequence[BaseTool | Callable | dict[str, Any]] | None = None,
+    subagents: list[SubAgent | CompiledSubAgent] | None = None,
     sandbox: SandboxBackendProtocol | None = None,
     sandbox_type: str | None = None,
     system_prompt: str | None = None,
@@ -381,6 +382,7 @@ def create_cli_agent(
     enable_memory: bool = True,
     enable_skills: bool = True,
     enable_shell: bool = True,
+    enable_swarm: bool = True,
     checkpointer: BaseCheckpointSaver | None = None,
 ) -> tuple[Pregel, CompositeBackend]:
     """Create a CLI-configured agent with flexible options.
@@ -392,6 +394,9 @@ def create_cli_agent(
         model: LLM model to use (e.g., `'anthropic:claude-sonnet-4-5-20250929'`)
         assistant_id: Agent identifier for memory/state storage
         tools: Additional tools to provide to agent
+        subagents: Additional subagent configurations. Pass a subagent
+            with name ``"general-purpose"`` to override the default
+            general-purpose subagent (e.g., to use a different model).
         sandbox: Optional sandbox backend for remote execution
             (e.g., `ModalBackend`).
 
@@ -443,7 +448,7 @@ def create_cli_agent(
         project_skills_dir = settings.get_project_skills_dir()
 
     # Load custom subagents from filesystem
-    custom_subagents: list[SubAgent | CompiledSubAgent] = []
+    custom_subagents: list[SubAgent | CompiledSubAgent] = list(subagents or [])
     user_agents_dir = settings.get_user_agents_dir(assistant_id)
     project_agents_dir = settings.get_project_agents_dir()
 
@@ -577,5 +582,6 @@ def create_cli_agent(
         interrupt_on=interrupt_on,
         checkpointer=final_checkpointer,
         subagents=custom_subagents or None,
+        enable_swarm=enable_swarm,
     ).with_config(config)
     return agent, composite_backend
