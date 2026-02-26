@@ -42,6 +42,12 @@ _IMAGE_PLACEHOLDER_PATTERN = re.compile(r"\[image \d+\]")
 Used to locate tokens for atomic backspace/delete handling.
 """
 
+_VIDEO_PLACEHOLDER_PATTERN = re.compile(r"\[video \d+\]")
+"""Pattern for detecting video placeholder tokens in the text area.
+
+Used to locate tokens for atomic backspace/delete handling.
+"""
+
 if TYPE_CHECKING:
     from textual import events
     from textual.app import ComposeResult
@@ -441,23 +447,25 @@ class ChatTextArea(TextArea):
                 forwards (delete).
         """
         text = self.text
-        for match in _IMAGE_PLACEHOLDER_PATTERN.finditer(text):
-            start, end = match.span()
-            if backwards:
-                # Cursor is inside token or right after a trailing space inserted
-                # with the token.
-                if start < cursor_offset <= end:
+        # Check both image and video placeholders
+        for pattern in (_IMAGE_PLACEHOLDER_PATTERN, _VIDEO_PLACEHOLDER_PATTERN):
+            for match in pattern.finditer(text):
+                start, end = match.span()
+                if backwards:
+                    # Cursor is inside token or right after a trailing space inserted
+                    # with the token.
+                    if start < cursor_offset <= end:
+                        return start, end
+                    if cursor_offset > 0:
+                        previous_index = cursor_offset - 1
+                        if (
+                            previous_index < len(text)
+                            and previous_index == end
+                            and text[previous_index].isspace()
+                        ):
+                            return start, cursor_offset
+                elif start <= cursor_offset < end:
                     return start, end
-                if cursor_offset > 0:
-                    previous_index = cursor_offset - 1
-                    if (
-                        previous_index < len(text)
-                        and previous_index == end
-                        and text[previous_index].isspace()
-                    ):
-                        return start, cursor_offset
-            elif start <= cursor_offset < end:
-                return start, end
         return None
 
     async def _on_paste(self, event: events.Paste) -> None:
@@ -986,23 +994,33 @@ class ChatInput(Vertical):
 
         Returns:
             Tuple of `(replacement, attached)` where `attached` indicates whether
-            at least one image attachment was created.
+            at least one media attachment (image or video) was created.
         """
         if not self._image_tracker:
             return raw_text, False
 
-        from deepagents_cli.image_utils import get_image_from_path
+        from deepagents_cli.image_utils import get_image_from_path, get_video_from_path
 
         parts: list[str] = []
         attached = False
         for path in paths:
+            # Try to load as image first
             image_data = get_image_from_path(path)
-            if image_data is None:
-                logger.debug("Could not load image from dropped path: %s", path)
-                parts.append(str(path))
+            if image_data is not None:
+                parts.append(self._image_tracker.add_image(image_data))
+                attached = True
                 continue
-            parts.append(self._image_tracker.add_image(image_data))
-            attached = True
+
+            # Try to load as video
+            video_data = get_video_from_path(path)
+            if video_data is not None:
+                parts.append(self._image_tracker.add_video(video_data))
+                attached = True
+                continue
+
+            # Not a supported media file, keep as path
+            logger.debug("Could not load image/video from dropped path: %s", path)
+            parts.append(str(path))
 
         if not attached:
             return raw_text, False
