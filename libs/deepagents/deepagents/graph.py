@@ -30,10 +30,11 @@ from deepagents.middleware.subagents import (
     SubAgent,
     SubAgentMiddleware,
 )
-from deepagents.middleware.summarization import SummarizationMiddleware, compute_summarization_defaults
-
-_ENABLE_COMPACT_TOOL = True
-"""Whether to enable the compact_conversation tool."""
+from deepagents.middleware.summarization import (
+    SummarizationMiddleware,
+    SummarizationToolMiddleware,
+    compute_summarization_defaults,
+)
 
 BASE_AGENT_PROMPT = """You are a Deep Agent, an AI assistant that helps users accomplish tasks using tools. You respond with text and tool calls. The user can see your responses and tool outputs in real time.
 
@@ -206,7 +207,6 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
             keep=summarization_defaults["keep"],
             trim_tokens_to_summarize=None,
             truncate_args_settings=summarization_defaults["truncate_args_settings"],
-            enable_compact_tool=_ENABLE_COMPACT_TOOL,
         ),
         AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
         PatchToolCallsMiddleware(),
@@ -247,7 +247,6 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
                     keep=subagent_summarization_defaults["keep"],
                     trim_tokens_to_summarize=None,
                     truncate_args_settings=subagent_summarization_defaults["truncate_args_settings"],
-                    enable_compact_tool=_ENABLE_COMPACT_TOOL,
                 ),
                 AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
                 PatchToolCallsMiddleware(),
@@ -276,6 +275,14 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
         deepagent_middleware.append(MemoryMiddleware(backend=backend, sources=memory))
     if skills is not None:
         deepagent_middleware.append(SkillsMiddleware(backend=backend, sources=skills))
+    summarization_middleware = SummarizationMiddleware(
+        model=model,
+        backend=backend,
+        trigger=summarization_defaults["trigger"],
+        keep=summarization_defaults["keep"],
+        trim_tokens_to_summarize=None,
+        truncate_args_settings=summarization_defaults["truncate_args_settings"],
+    )
     deepagent_middleware.extend(
         [
             FilesystemMiddleware(backend=backend),
@@ -283,15 +290,8 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
                 backend=backend,
                 subagents=all_subagents,
             ),
-            SummarizationMiddleware(
-                model=model,
-                backend=backend,
-                trigger=summarization_defaults["trigger"],
-                keep=summarization_defaults["keep"],
-                trim_tokens_to_summarize=None,
-                truncate_args_settings=summarization_defaults["truncate_args_settings"],
-                enable_compact_tool=_ENABLE_COMPACT_TOOL,
-            ),
+            summarization_middleware,
+            SummarizationToolMiddleware(summarization_middleware),
             AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
             PatchToolCallsMiddleware(),
         ]

@@ -1,4 +1,4 @@
-"""Unit tests for the compact_conversation tool on SummarizationMiddleware."""
+"""Unit tests for the compact_conversation tool via SummarizationToolMiddleware."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
 
-from deepagents.middleware.summarization import SummarizationMiddleware
+from deepagents.middleware.summarization import SummarizationMiddleware, SummarizationToolMiddleware
 
 
 def _make_mock_backend() -> MagicMock:
@@ -84,11 +84,11 @@ def _make_runtime(
     return runtime
 
 
-def _make_middleware(
+def _make_summarization_middleware(
     model: MagicMock | None = None,
     backend: MagicMock | None = None,
 ) -> SummarizationMiddleware:
-    """Create a SummarizationMiddleware with compact tool enabled."""
+    """Create a bare SummarizationMiddleware (no compact tool)."""
     if model is None:
         model = _make_mock_model()
     if backend is None:
@@ -97,8 +97,16 @@ def _make_middleware(
         model=model,
         backend=backend,
         trigger=("fraction", 0.85),
-        enable_compact_tool=True,
     )
+
+
+def _make_middleware(
+    model: MagicMock | None = None,
+    backend: MagicMock | None = None,
+) -> SummarizationToolMiddleware:
+    """Create a SummarizationToolMiddleware wrapping a SummarizationMiddleware."""
+    summ = _make_summarization_middleware(model, backend)
+    return SummarizationToolMiddleware(summ)
 
 
 class TestToolRegistered:
@@ -115,15 +123,9 @@ class TestToolRegistered:
         mw = _make_middleware()
         assert mw.tools[0].description
 
-    def test_no_tool_when_disabled(self) -> None:
-        """Middleware should not expose tools when `enable_compact_tool=False`."""
-        model = _make_mock_model()
-        backend = _make_mock_backend()
-        mw = SummarizationMiddleware(
-            model=model,
-            backend=backend,
-            enable_compact_tool=False,
-        )
+    def test_summarization_middleware_has_no_tools(self) -> None:
+        """SummarizationMiddleware itself should not expose any tools."""
+        mw = _make_summarization_middleware()
         assert len(mw.tools) == 0
 
 
@@ -161,7 +163,7 @@ class TestNotEnoughMessages:
         messages = _make_messages(3)
         runtime = _make_runtime(messages)
 
-        with patch.object(mw, "_determine_cutoff_index", return_value=0):
+        with patch.object(mw._summarization, "_determine_cutoff_index", return_value=0):
             result = mw._run_compact(runtime)
 
         assert isinstance(result, Command)
@@ -177,7 +179,7 @@ class TestNotEnoughMessages:
         messages = _make_messages(3)
         runtime = _make_runtime(messages)
 
-        with patch.object(mw, "_determine_cutoff_index", return_value=0):
+        with patch.object(mw._summarization, "_determine_cutoff_index", return_value=0):
             result = await mw._arun_compact(runtime)
 
         assert isinstance(result, Command)
@@ -196,14 +198,14 @@ class TestCompactSuccess:
         runtime = _make_runtime(messages)
 
         with (
-            patch.object(mw, "_determine_cutoff_index", return_value=4),
+            patch.object(mw._summarization, "_determine_cutoff_index", return_value=4),
             patch.object(
-                mw,
+                mw._summarization,
                 "_partition_messages",
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
-            patch.object(mw, "_offload_to_backend", return_value="/conversation_history/test-thread.md"),
-            patch.object(mw, "_create_summary", return_value="Summary of the conversation."),
+            patch.object(mw._summarization, "_offload_to_backend", return_value="/conversation_history/test-thread.md"),
+            patch.object(mw._summarization, "_create_summary", return_value="Summary of the conversation."),
         ):
             result = mw._run_compact(runtime)
 
@@ -231,14 +233,14 @@ class TestCompactSuccess:
         runtime = _make_runtime(messages, event=prior_event)
 
         with (
-            patch.object(mw, "_determine_cutoff_index", return_value=3),
+            patch.object(mw._summarization, "_determine_cutoff_index", return_value=3),
             patch.object(
-                mw,
+                mw._summarization,
                 "_partition_messages",
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
-            patch.object(mw, "_offload_to_backend", return_value=None),
-            patch.object(mw, "_create_summary", return_value="Summary."),
+            patch.object(mw._summarization, "_offload_to_backend", return_value=None),
+            patch.object(mw._summarization, "_create_summary", return_value="Summary."),
         ):
             result = mw._run_compact(runtime)
 
@@ -256,14 +258,14 @@ class TestCompactSuccess:
         runtime = _make_runtime(messages)
 
         with (
-            patch.object(mw, "_determine_cutoff_index", return_value=4),
+            patch.object(mw._summarization, "_determine_cutoff_index", return_value=4),
             patch.object(
-                mw,
+                mw._summarization,
                 "_partition_messages",
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
-            patch.object(mw, "_aoffload_to_backend", return_value="/conversation_history/test-thread.md"),
-            patch.object(mw, "_acreate_summary", return_value="Summary of the conversation."),
+            patch.object(mw._summarization, "_aoffload_to_backend", return_value="/conversation_history/test-thread.md"),
+            patch.object(mw._summarization, "_acreate_summary", return_value="Summary of the conversation."),
         ):
             result = await mw._arun_compact(runtime)
 
@@ -279,14 +281,14 @@ class TestCompactSuccess:
         runtime = _make_runtime(messages)
 
         with (
-            patch.object(mw, "_determine_cutoff_index", return_value=4),
+            patch.object(mw._summarization, "_determine_cutoff_index", return_value=4),
             patch.object(
-                mw,
+                mw._summarization,
                 "_partition_messages",
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
-            patch.object(mw, "_offload_to_backend", return_value="/conversation_history/t.md"),
-            patch.object(mw, "_create_summary", return_value="Summary."),
+            patch.object(mw._summarization, "_offload_to_backend", return_value="/conversation_history/t.md"),
+            patch.object(mw._summarization, "_create_summary", return_value="Summary."),
         ):
             result = mw._run_compact(runtime)
 
@@ -301,14 +303,14 @@ class TestCompactSuccess:
         runtime = _make_runtime(messages)
 
         with (
-            patch.object(mw, "_determine_cutoff_index", return_value=4),
+            patch.object(mw._summarization, "_determine_cutoff_index", return_value=4),
             patch.object(
-                mw,
+                mw._summarization,
                 "_partition_messages",
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
-            patch.object(mw, "_offload_to_backend", return_value=None),
-            patch.object(mw, "_create_summary", return_value="Summary."),
+            patch.object(mw._summarization, "_offload_to_backend", return_value=None),
+            patch.object(mw._summarization, "_create_summary", return_value="Summary."),
         ):
             result = mw._run_compact(runtime)
 
@@ -327,14 +329,14 @@ class TestOffloadFailure:
         runtime = _make_runtime(messages)
 
         with (
-            patch.object(mw, "_determine_cutoff_index", return_value=4),
+            patch.object(mw._summarization, "_determine_cutoff_index", return_value=4),
             patch.object(
-                mw,
+                mw._summarization,
                 "_partition_messages",
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
-            patch.object(mw, "_offload_to_backend", return_value=None),
-            patch.object(mw, "_create_summary", return_value="Summary."),
+            patch.object(mw._summarization, "_offload_to_backend", return_value=None),
+            patch.object(mw._summarization, "_create_summary", return_value="Summary."),
         ):
             result = mw._run_compact(runtime)
 
@@ -355,14 +357,14 @@ class TestCompactErrorHandling:
         runtime = _make_runtime(messages)
 
         with (
-            patch.object(mw, "_determine_cutoff_index", return_value=4),
+            patch.object(mw._summarization, "_determine_cutoff_index", return_value=4),
             patch.object(
-                mw,
+                mw._summarization,
                 "_partition_messages",
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
-            patch.object(mw, "_offload_to_backend", return_value=None),
-            patch.object(mw, "_create_summary", side_effect=RuntimeError("model unavailable")),
+            patch.object(mw._summarization, "_offload_to_backend", return_value=None),
+            patch.object(mw._summarization, "_create_summary", side_effect=RuntimeError("model unavailable")),
         ):
             result = mw._run_compact(runtime)
 
@@ -382,15 +384,15 @@ class TestCompactErrorHandling:
         runtime = _make_runtime(messages)
 
         with (
-            patch.object(mw, "_determine_cutoff_index", return_value=4),
+            patch.object(mw._summarization, "_determine_cutoff_index", return_value=4),
             patch.object(
-                mw,
+                mw._summarization,
                 "_partition_messages",
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
-            patch.object(mw, "_aoffload_to_backend", return_value=None),
+            patch.object(mw._summarization, "_aoffload_to_backend", return_value=None),
             patch.object(
-                mw,
+                mw._summarization,
                 "_acreate_summary",
                 side_effect=RuntimeError("model unavailable"),
             ),
@@ -410,16 +412,16 @@ class TestCompactErrorHandling:
         runtime = _make_runtime(messages)
 
         with (
-            patch.object(mw, "_determine_cutoff_index", return_value=4),
+            patch.object(mw._summarization, "_determine_cutoff_index", return_value=4),
             patch.object(
-                mw,
+                mw._summarization,
                 "_partition_messages",
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
-            patch.object(mw, "_create_summary", return_value="Summary."),
+            patch.object(mw._summarization, "_create_summary", return_value="Summary."),
             patch.object(
                 mw,
-                "_resolve_backend_for_tool",
+                "_resolve_backend",
                 side_effect=ConnectionError("sandbox unreachable"),
             ),
         ):
@@ -437,18 +439,16 @@ class TestMalformedEvent:
 
     def test_malformed_event_falls_back_to_raw_messages(self) -> None:
         """Should fall back to raw messages when event keys are missing."""
-        mw = _make_middleware()
         messages = _make_messages(5)
         # Event missing required keys
         bad_event: dict[str, Any] = {"unexpected_key": 42}
-        result = mw._apply_event_to_messages(messages, bad_event)
+        result = SummarizationMiddleware._apply_event_to_messages(messages, bad_event)
         assert result == messages
 
     def test_none_event_returns_message_copy(self) -> None:
         """Should return a copy of messages when event is None."""
-        mw = _make_middleware()
         messages = _make_messages(5)
-        result = mw._apply_event_to_messages(messages, None)
+        result = SummarizationMiddleware._apply_event_to_messages(messages, None)
         assert result == messages
         assert result is not messages
 
@@ -466,31 +466,31 @@ class TestMalformedEvent:
         assert result[0] is summary_msg
 
 
-class TestResolveBackendForTool:
+class TestResolveBackend:
     """Test backend resolution for tool context."""
 
     def test_static_backend(self) -> None:
         """Should return the backend directly when it's not callable."""
         backend = NonCallableMagicMock()
-        mw = SummarizationMiddleware(
+        summ = SummarizationMiddleware(
             model=_make_mock_model(),
             backend=backend,
-            enable_compact_tool=True,
         )
+        mw = SummarizationToolMiddleware(summ)
         runtime = _make_runtime(_make_messages(1))
-        assert mw._resolve_backend_for_tool(runtime) is backend
+        assert mw._resolve_backend(runtime) is backend
 
     def test_callable_backend(self) -> None:
         """Should call the factory with the ToolRuntime."""
         resolved = _make_mock_backend()
         factory = MagicMock(return_value=resolved)
-        mw = SummarizationMiddleware(
+        summ = SummarizationMiddleware(
             model=_make_mock_model(),
             backend=factory,
-            enable_compact_tool=True,
         )
+        mw = SummarizationToolMiddleware(summ)
         runtime = _make_runtime(_make_messages(1))
-        result = mw._resolve_backend_for_tool(runtime)
+        result = mw._resolve_backend(runtime)
         assert result is resolved
         factory.assert_called_once_with(runtime)
 
@@ -549,15 +549,15 @@ def _ai_message_with_usage(total_tokens: int, provider: str = "test-provider") -
 def _make_middleware_with_trigger(
     trigger: Any,  # noqa: ANN401
     provider: str = "test-provider",
-) -> SummarizationMiddleware:
+) -> SummarizationToolMiddleware:
     model = _make_mock_model()
     model._get_ls_params.return_value = {"ls_provider": provider}
-    return SummarizationMiddleware(
+    summ = SummarizationMiddleware(
         model=model,
         backend=_make_mock_backend(),
         trigger=trigger,
-        enable_compact_tool=True,
     )
+    return SummarizationToolMiddleware(summ)
 
 
 class TestIsEligibleForCompaction:
@@ -577,10 +577,10 @@ class TestIsEligibleForCompaction:
         messages = [HumanMessage(content="hi"), _ai_message_with_usage(60_000)]
         runtime = _make_runtime(messages)
         with (
-            patch.object(mw, "_determine_cutoff_index", return_value=1),
-            patch.object(mw, "_partition_messages", side_effect=lambda m, i: (m[:i], m[i:])),
-            patch.object(mw, "_create_summary", return_value="Summary."),
-            patch.object(mw, "_offload_to_backend", return_value=None),
+            patch.object(mw._summarization, "_determine_cutoff_index", return_value=1),
+            patch.object(mw._summarization, "_partition_messages", side_effect=lambda m, i: (m[:i], m[i:])),
+            patch.object(mw._summarization, "_create_summary", return_value="Summary."),
+            patch.object(mw._summarization, "_offload_to_backend", return_value=None),
         ):
             result = mw._run_compact(runtime)
         assert "_summarization_event" in result.update
@@ -599,10 +599,10 @@ class TestIsEligibleForCompaction:
         messages = [HumanMessage(content="hi"), _ai_message_with_usage(100_000)]
         runtime = _make_runtime(messages)
         with (
-            patch.object(mw, "_determine_cutoff_index", return_value=1),
-            patch.object(mw, "_partition_messages", side_effect=lambda m, i: (m[:i], m[i:])),
-            patch.object(mw, "_create_summary", return_value="Summary."),
-            patch.object(mw, "_offload_to_backend", return_value=None),
+            patch.object(mw._summarization, "_determine_cutoff_index", return_value=1),
+            patch.object(mw._summarization, "_partition_messages", side_effect=lambda m, i: (m[:i], m[i:])),
+            patch.object(mw._summarization, "_create_summary", return_value="Summary."),
+            patch.object(mw._summarization, "_offload_to_backend", return_value=None),
         ):
             result = mw._run_compact(runtime)
         assert "_summarization_event" in result.update
@@ -612,7 +612,7 @@ class TestIsEligibleForCompaction:
         mw = _make_middleware_with_trigger(("tokens", 100_000))
         messages = _make_messages(30)
         runtime = _make_runtime(messages)
-        with patch.object(mw, "_determine_cutoff_index", return_value=0):
+        with patch.object(mw._summarization, "_determine_cutoff_index", return_value=0):
             result = mw._run_compact(runtime)
         assert "Nothing to compact" in result.update["messages"][0].content
 
