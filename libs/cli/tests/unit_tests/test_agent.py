@@ -661,7 +661,7 @@ class TestMiddlewareStackConformance:
             Settings.get_built_in_skills_dir()
         )
         mock_settings.get_user_agent_md_path.return_value = agent_dir / "AGENTS.md"
-        mock_settings.get_project_agent_md_path.return_value = None
+        mock_settings.get_project_agent_md_path.return_value = []
         mock_settings.get_user_agents_dir.return_value = tmp_path / "agents"
         mock_settings.get_project_agents_dir.return_value = None
         mock_settings.model_name = None
