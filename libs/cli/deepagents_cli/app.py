@@ -1424,7 +1424,7 @@ class DeepAgentsApp(App):
                 f"({pct}% decrease), "
                 f"{len(to_keep)} messages unchanged."
             )
-            summary_msg.content += savings_note  # type: ignore[operator]
+            summary_msg.content += savings_note
 
             state_cutoff = middleware._compute_state_cutoff(event, cutoff)
 

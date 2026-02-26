@@ -198,11 +198,7 @@ def test_summarization_offloads_to_filesystem(tmp_path: Path, model: str) -> Non
 
 def _called_compact(trajectory: AgentTrajectory) -> bool:
     """Check if `compact_conversation` was called in any step."""
-    return any(
-        tc.get("name") == "compact_conversation"
-        for step in trajectory.steps
-        for tc in step.action.tool_calls
-    )
+    return any(tc.get("name") == "compact_conversation" for step in trajectory.steps for tc in step.action.tool_calls)
 
 
 def _load_seed_messages() -> list[AnyMessage]:
