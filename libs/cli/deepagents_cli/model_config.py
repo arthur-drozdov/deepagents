@@ -126,6 +126,9 @@ class ProviderConfig(TypedDict, total=False):
     base_url: str
     """Custom base URL."""
 
+    max_input_tokens: int
+    """Override for the model's max input tokens (context window)."""
+
     # Level 2: arbitrary BaseChatModel classes
 
     class_path: str
@@ -641,6 +644,18 @@ class ModelConfig:
         """
         provider = self.providers.get(provider_name)
         return provider.get("base_url") if provider else None
+
+    def get_max_input_tokens(self, provider_name: str) -> int | None:
+        """Get max input tokens override.
+
+        Args:
+            provider_name: The provider to get max input tokens for.
+
+        Returns:
+            Max input tokens if configured, None otherwise.
+        """
+        provider = self.providers.get(provider_name)
+        return provider.get("max_input_tokens") if provider else None
 
     def get_api_key_env(self, provider_name: str) -> str | None:
         """Get the environment variable name for a provider's API key.
