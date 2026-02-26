@@ -568,6 +568,27 @@ def create_cli_agent(
     # Create the agent
     # Use provided checkpointer or fallback to InMemorySaver
     final_checkpointer = checkpointer if checkpointer is not None else InMemorySaver()
+
+    # Inject configured max_input_tokens into the model profile so that the
+    # summarization middleware computes fraction-based defaults instead of fixed tokens
+    if isinstance(model, str):
+        from langchain.chat_models import init_chat_model
+
+        if model.startswith("openai:"):
+            model = init_chat_model(model, use_responses_api=True)
+        else:
+            model = init_chat_model(model)
+
+    if getattr(model, "profile", None) is None:
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            model.profile = {}
+
+    profile = getattr(model, "profile", None)
+    if isinstance(profile, dict) and settings.model_context_limit:
+        profile["max_input_tokens"] = settings.model_context_limit
+
     agent = create_deep_agent(
         model=model,
         system_prompt=system_prompt,
