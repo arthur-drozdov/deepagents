@@ -571,7 +571,7 @@ def create_cli_agent(
 
     # If a context limit is configured in settings, inject it as `max_input_tokens`
     # into the model profile. This allows the `_compute_summarization_defaults`
-    # helper used by the general-purpose subagent to avoid defaulting to 170,000 for
+    # helper used by the deep agent in general to avoid defaulting to 170,000 for
     # models that don't support that many tokens, and instead compute fraction-based
     # defaults.
     if settings.model_context_limit:
