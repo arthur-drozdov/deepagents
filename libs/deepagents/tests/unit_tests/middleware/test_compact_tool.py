@@ -162,7 +162,7 @@ class TestNotEnoughMessages:
         runtime = _make_runtime(messages)
 
         with patch.object(mw, "_determine_cutoff_index", return_value=0):
-            result = mw._run_compact("Test summary", runtime)
+            result = mw._run_compact(runtime)
 
         assert isinstance(result, Command)
         assert result.update is not None
@@ -178,7 +178,7 @@ class TestNotEnoughMessages:
         runtime = _make_runtime(messages)
 
         with patch.object(mw, "_determine_cutoff_index", return_value=0):
-            result = await mw._arun_compact("Test summary", runtime)
+            result = await mw._arun_compact(runtime)
 
         assert isinstance(result, Command)
         assert result.update is not None
@@ -203,8 +203,9 @@ class TestCompactSuccess:
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
             patch.object(mw, "_offload_to_backend", return_value="/conversation_history/test-thread.md"),
+            patch.object(mw, "_create_summary", return_value="Summary of the conversation."),
         ):
-            result = mw._run_compact("Summary of the conversation.", runtime)
+            result = mw._run_compact(runtime)
 
         assert isinstance(result, Command)
         assert result.update is not None
@@ -237,8 +238,9 @@ class TestCompactSuccess:
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
             patch.object(mw, "_offload_to_backend", return_value=None),
+            patch.object(mw, "_create_summary", return_value="Summary."),
         ):
-            result = mw._run_compact("Summary.", runtime)
+            result = mw._run_compact(runtime)
 
         assert isinstance(result, Command)
         assert result.update is not None
@@ -261,8 +263,9 @@ class TestCompactSuccess:
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
             patch.object(mw, "_aoffload_to_backend", return_value="/conversation_history/test-thread.md"),
+            patch.object(mw, "_acreate_summary", return_value="Summary of the conversation."),
         ):
-            result = await mw._arun_compact("Summary of the conversation.", runtime)
+            result = await mw._arun_compact(runtime)
 
         assert isinstance(result, Command)
         assert result.update is not None
@@ -283,8 +286,9 @@ class TestCompactSuccess:
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
             patch.object(mw, "_offload_to_backend", return_value="/conversation_history/t.md"),
+            patch.object(mw, "_create_summary", return_value="Summary."),
         ):
-            result = mw._run_compact("Summary.", runtime)
+            result = mw._run_compact(runtime)
 
         assert result.update is not None
         event = result.update["_summarization_event"]
@@ -304,8 +308,9 @@ class TestCompactSuccess:
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
             patch.object(mw, "_offload_to_backend", return_value=None),
+            patch.object(mw, "_create_summary", return_value="Summary."),
         ):
-            result = mw._run_compact("Summary.", runtime)
+            result = mw._run_compact(runtime)
 
         assert result.update is not None
         event = result.update["_summarization_event"]
@@ -329,8 +334,9 @@ class TestOffloadFailure:
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
             patch.object(mw, "_offload_to_backend", return_value=None),
+            patch.object(mw, "_create_summary", return_value="Summary."),
         ):
-            result = mw._run_compact("Summary.", runtime)
+            result = mw._run_compact(runtime)
 
         assert isinstance(result, Command)
         assert result.update is not None
@@ -342,8 +348,8 @@ class TestOffloadFailure:
 class TestCompactErrorHandling:
     """Test that compact gracefully handles errors during summarization."""
 
-    def test_sync_offload_failure_returns_error_tool_message(self) -> None:
-        """Sync: offload failure should return an error ToolMessage, not raise."""
+    def test_sync_summary_failure_returns_error_tool_message(self) -> None:
+        """Sync: LLM failure should return an error ToolMessage, not raise."""
         mw = _make_middleware()
         messages = _make_messages(10)
         runtime = _make_runtime(messages)
@@ -355,21 +361,22 @@ class TestCompactErrorHandling:
                 "_partition_messages",
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
-            patch.object(mw, "_offload_to_backend", side_effect=RuntimeError("backend unavailable")),
+            patch.object(mw, "_offload_to_backend", return_value=None),
+            patch.object(mw, "_create_summary", side_effect=RuntimeError("model unavailable")),
         ):
-            result = mw._run_compact("Summary of the conversation.", runtime)
+            result = mw._run_compact(runtime)
 
         assert isinstance(result, Command)
         assert result.update is not None
         msg = result.update["messages"][0]
         assert "Compaction failed" in msg.content
-        assert "backend unavailable" in msg.content
+        assert "model unavailable" in msg.content
         # Should NOT have a _summarization_event (state not modified)
         assert "_summarization_event" not in result.update
 
     @pytest.mark.asyncio
-    async def test_async_offload_failure_returns_error_tool_message(self) -> None:
-        """Async: offload failure should return an error ToolMessage, not raise."""
+    async def test_async_summary_failure_returns_error_tool_message(self) -> None:
+        """Async: LLM failure should return an error ToolMessage, not raise."""
         mw = _make_middleware()
         messages = _make_messages(10)
         runtime = _make_runtime(messages)
@@ -381,13 +388,14 @@ class TestCompactErrorHandling:
                 "_partition_messages",
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
+            patch.object(mw, "_aoffload_to_backend", return_value=None),
             patch.object(
                 mw,
-                "_aoffload_to_backend",
-                side_effect=RuntimeError("backend unavailable"),
+                "_acreate_summary",
+                side_effect=RuntimeError("model unavailable"),
             ),
         ):
-            result = await mw._arun_compact("Summary of the conversation.", runtime)
+            result = await mw._arun_compact(runtime)
 
         assert isinstance(result, Command)
         assert result.update is not None
@@ -408,13 +416,14 @@ class TestCompactErrorHandling:
                 "_partition_messages",
                 side_effect=lambda msgs, idx: (msgs[:idx], msgs[idx:]),
             ),
+            patch.object(mw, "_create_summary", return_value="Summary."),
             patch.object(
                 mw,
                 "_resolve_backend_for_tool",
                 side_effect=ConnectionError("sandbox unreachable"),
             ),
         ):
-            result = mw._run_compact("Summary.", runtime)
+            result = mw._run_compact(runtime)
 
         assert isinstance(result, Command)
         assert result.update is not None
@@ -559,7 +568,7 @@ class TestIsEligibleForCompaction:
         mw = _make_middleware_with_trigger(("tokens", 100_000))
         messages = [HumanMessage(content="hi"), _ai_message_with_usage(40_000)]
         runtime = _make_runtime(messages)
-        result = mw._run_compact("Test summary", runtime)
+        result = mw._run_compact(runtime)
         assert "Nothing to compact" in result.update["messages"][0].content
 
     def test_over_50pct_tokens_trigger_proceeds(self) -> None:
@@ -570,9 +579,10 @@ class TestIsEligibleForCompaction:
         with (
             patch.object(mw, "_determine_cutoff_index", return_value=1),
             patch.object(mw, "_partition_messages", side_effect=lambda m, i: (m[:i], m[i:])),
+            patch.object(mw, "_create_summary", return_value="Summary."),
             patch.object(mw, "_offload_to_backend", return_value=None),
         ):
-            result = mw._run_compact("Summary.", runtime)
+            result = mw._run_compact(runtime)
         assert "_summarization_event" in result.update
 
     def test_under_50pct_fraction_trigger_returns_nothing(self) -> None:
@@ -580,7 +590,7 @@ class TestIsEligibleForCompaction:
         mw = _make_middleware_with_trigger(("fraction", 0.8))
         messages = [HumanMessage(content="hi"), _ai_message_with_usage(50_000)]
         runtime = _make_runtime(messages)
-        result = mw._run_compact("Test summary", runtime)
+        result = mw._run_compact(runtime)
         assert "Nothing to compact" in result.update["messages"][0].content
 
     def test_over_50pct_fraction_trigger_proceeds(self) -> None:
@@ -591,9 +601,10 @@ class TestIsEligibleForCompaction:
         with (
             patch.object(mw, "_determine_cutoff_index", return_value=1),
             patch.object(mw, "_partition_messages", side_effect=lambda m, i: (m[:i], m[i:])),
+            patch.object(mw, "_create_summary", return_value="Summary."),
             patch.object(mw, "_offload_to_backend", return_value=None),
         ):
-            result = mw._run_compact("Summary.", runtime)
+            result = mw._run_compact(runtime)
         assert "_summarization_event" in result.update
 
     def test_no_usage_metadata_falls_through(self) -> None:
@@ -602,7 +613,7 @@ class TestIsEligibleForCompaction:
         messages = _make_messages(30)
         runtime = _make_runtime(messages)
         with patch.object(mw, "_determine_cutoff_index", return_value=0):
-            result = mw._run_compact("Test summary", runtime)
+            result = mw._run_compact(runtime)
         assert "Nothing to compact" in result.update["messages"][0].content
 
     @pytest.mark.asyncio
@@ -611,5 +622,5 @@ class TestIsEligibleForCompaction:
         mw = _make_middleware_with_trigger(("tokens", 100_000))
         messages = [HumanMessage(content="hi"), _ai_message_with_usage(40_000)]
         runtime = _make_runtime(messages)
-        result = await mw._arun_compact("Test summary", runtime)
+        result = await mw._arun_compact(runtime)
         assert "Nothing to compact" in result.update["messages"][0].content
