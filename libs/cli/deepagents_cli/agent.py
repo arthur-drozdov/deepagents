@@ -569,25 +569,20 @@ def create_cli_agent(
     # Use provided checkpointer or fallback to InMemorySaver
     final_checkpointer = checkpointer if checkpointer is not None else InMemorySaver()
 
-    # Inject configured max_input_tokens into the model profile so that the
-    # summarization middleware computes fraction-based defaults instead of fixed tokens
-    if isinstance(model, str):
-        from langchain.chat_models import init_chat_model
-
-        if model.startswith("openai:"):
-            model = init_chat_model(model, use_responses_api=True)
-        else:
-            model = init_chat_model(model)
-
-    if getattr(model, "profile", None) is None:
-        import contextlib
-
-        with contextlib.suppress(Exception):
+    # If a context limit is configured in settings, inject it as `max_input_tokens`
+    # into the model profile. This allows the `_compute_summarization_defaults`
+    # helper used by the general-purpose subagent to avoid defaulting to 170,000 for
+    # models that don't support that many tokens, and instead compute fraction-based
+    # defaults.
+    # If the model parameter is a string, it is assumed to be a well-known model
+    # with its own internal profile so we do not attempt to override it.
+    if settings.model_context_limit and not isinstance(model, str):
+        if getattr(model, "profile", None) is None:
             model.profile = {}
 
-    profile = getattr(model, "profile", None)
-    if isinstance(profile, dict) and settings.model_context_limit:
-        profile["max_input_tokens"] = settings.model_context_limit
+        profile = getattr(model, "profile", None)
+        if isinstance(profile, dict):
+            profile["max_input_tokens"] = settings.model_context_limit
 
     agent = create_deep_agent(
         model=model,
