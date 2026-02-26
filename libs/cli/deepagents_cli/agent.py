@@ -574,15 +574,26 @@ def create_cli_agent(
     # helper used by the general-purpose subagent to avoid defaulting to 170,000 for
     # models that don't support that many tokens, and instead compute fraction-based
     # defaults.
-    # If the model parameter is a string, it is assumed to be a well-known model
-    # with its own internal profile so we do not attempt to override it.
-    if settings.model_context_limit and not isinstance(model, str):
-        if getattr(model, "profile", None) is None:
-            model.profile = {}
+    if settings.model_context_limit:
+        if isinstance(model, str):
+            from langchain.chat_models import init_chat_model
 
-        profile = getattr(model, "profile", None)
-        if isinstance(profile, dict):
-            profile["max_input_tokens"] = settings.model_context_limit
+            # OpenAI models require the responses API in deepagents implicitly
+            # Passing kwargs enables us to construct it fully initialized
+            profile_dict = {"max_input_tokens": settings.model_context_limit}
+            if model.startswith("openai:"):
+                model = init_chat_model(
+                    model, profile=profile_dict, use_responses_api=True
+                )
+            else:
+                model = init_chat_model(model, profile=profile_dict)
+        else:
+            if getattr(model, "profile", None) is None:
+                model.profile = {}
+
+            profile = getattr(model, "profile", None)
+            if isinstance(profile, dict):
+                profile["max_input_tokens"] = settings.model_context_limit
 
     agent = create_deep_agent(
         model=model,
