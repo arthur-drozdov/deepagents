@@ -1066,7 +1066,7 @@ class SummarizationToolMiddleware(AgentMiddleware):
         """
         backend = self._summarization._backend
         if callable(backend):
-            return backend(runtime)
+            return backend(runtime)  # ty: ignore[call-top-callable]
         return backend
 
     def _create_compact_tool(self) -> BaseTool:
