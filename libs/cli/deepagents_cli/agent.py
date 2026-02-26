@@ -570,25 +570,15 @@ def create_cli_agent(
     final_checkpointer = checkpointer if checkpointer is not None else InMemorySaver()
 
     # If a context limit is configured in settings, inject it as `max_input_tokens`
-    # into the model profile. This allows the summarization middleware to compute
-    # fraction-based defaults instead of fixed tokens (crucial for subagents).
-    if settings.model_context_limit:
-        # The `model` parameter might be a string representing the model name
-        # (e.g., in unit tests or when passed directly from CLI flags).
-        # We must instantiate it into a BaseChatModel to attach the `profile` attribute.
-        if isinstance(model, str):
-            from langchain.chat_models import init_chat_model
-
-            model = init_chat_model(model)
-
-        # Ensure the model object has a `profile` dictionary attribute.
-        # Some model classes do not allow adding new attributes or might
-        # raise errors when setting unknown attributes, so we suppress exceptions.
+    # into the model profile. This allows the `_compute_summarization_defaults`
+    # helper used by the general-purpose subagent to avoid defaulting to 170,000 for
+    # models that don't support that many tokens, and instead compute fraction-based
+    # defaults.
+    # If the model parameter is a string, it is assumed to be a well-known model
+    # with its own internal profile so we do not attempt to override it.
+    if settings.model_context_limit and not isinstance(model, str):
         if getattr(model, "profile", None) is None:
-            import contextlib
-
-            with contextlib.suppress(Exception):
-                model.profile = {}
+            model.profile = {}
 
         profile = getattr(model, "profile", None)
         if isinstance(profile, dict):
