@@ -39,6 +39,21 @@ export class DeepAgentsLLMProvider implements LLMProvider {
             ws.send(JSON.stringify({ text: textToSend }));
         });
 
+        const signal = (request as any).abortSignal;
+        if (signal) {
+            signal.addEventListener('abort', () => {
+                console.log('[llm] Request aborted by orchestrator, closing ws.');
+                done = true;
+                if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+                    ws.close();
+                }
+                if (resolveNextMessage) {
+                    resolveNextMessage();
+                    resolveNextMessage = null;
+                }
+            });
+        }
+
         ws.on('message', (data: string) => {
             console.log(`[llm] Received message: ${data.toString()}`);
             const msg = JSON.parse(data.toString());
@@ -87,7 +102,9 @@ export class DeepAgentsLLMProvider implements LLMProvider {
             }
         }
 
-        ws.close();
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+            ws.close();
+        }
         // Yield final done chunk
         yield { content: '', done: true } as LLMChunk;
     }

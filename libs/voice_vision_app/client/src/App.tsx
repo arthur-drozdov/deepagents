@@ -71,6 +71,74 @@ function App() {
     };
   }, [client]);
 
+  // Video recording cronjob (Phase 6)
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
+    let currentAbort: AbortController | null = null;
+
+    if (videoState === 'on' && videoStreamRef.current) {
+      // Run every 5 seconds to capture a 5s clip
+      interval = setInterval(() => {
+        try {
+          if (!localVideoRef.current || localVideoRef.current.readyState < 2) return;
+
+          if (currentAbort) {
+            currentAbort.abort();
+          }
+          currentAbort = new AbortController();
+
+          const video = localVideoRef.current;
+
+          // Downsample to max 240p height to reduce fidelity/size and prevent vLLM EngineCore OOM
+          let targetHeight = 240;
+          let targetWidth = video.videoWidth;
+          if (video.videoHeight > targetHeight) {
+            targetWidth = Math.round(video.videoWidth * (targetHeight / video.videoHeight));
+          } else {
+            targetHeight = video.videoHeight;
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = targetWidth;
+          canvas.height = targetHeight;
+
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return;
+
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+          // Get base64 JPEG from canvas
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          if (!dataUrl.includes(',')) return;
+
+          const base64data = dataUrl.split(',')[1];
+
+          fetch('http://localhost:8080/vision', {
+            method: 'POST',
+            signal: currentAbort.signal,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              video_base64: base64data,
+              format: 'jpeg' // Use 'jpeg' to signify it's a single image frame now
+            })
+          }).catch(err => {
+            if (err.name !== 'AbortError') {
+              console.error('Vision processing POST failed', err);
+            }
+          });
+
+        } catch (e) {
+          console.error('Error capturing vision frame', e);
+        }
+      }, 30000); // 30s interval to capture one frame
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+      if (currentAbort) currentAbort.abort();
+    };
+  }, [videoState]);
+
   const connectAndStart = async () => {
     try {
       await client.start();

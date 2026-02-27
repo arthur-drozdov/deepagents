@@ -45,3 +45,12 @@ server.on('error', (err) => {
 });
 
 server.start().catch(console.error);
+
+// Add global error handlers to prevent silent crashes from unhandled websocket drops
+process.on('uncaughtException', (err) => {
+    console.error('[Global] Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[Global] Unhandled Rejection at:', promise, 'reason:', reason);
+});
