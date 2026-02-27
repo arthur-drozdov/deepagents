@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Active AI Agent Interaction</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#1313ec",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101022",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "1rem", "lg": "2rem", "xl": "3rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        /* Custom glowing orb effect */
+        .glowing-orb {
+            background: radial-gradient(circle at center, rgba(19, 19, 236, 0.8) 0%, rgba(19, 19, 236, 0.4) 30%, rgba(19, 19, 236, 0.1) 60%, transparent 70%);
+            filter: blur(20px);
+        }
+        
+        /* Glassmorphism utility */
+        .glass {
+            background: rgba(16, 16, 34, 0.6);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        /* Subtle noise texture overlay */
+        .bg-noise {
+            position: relative;
+        }
+        .bg-noise::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.05'/%3E%3C/svg%3E");
+            pointer-events: none;
+            z-index: 0;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display antialiased min-h-screen flex flex-col overflow-hidden relative">
+<!-- Background Elements -->
+<div class="absolute inset-0 z-0 bg-background-dark bg-noise">
+<!-- Abstract background gradients -->
+<div class="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-primary/20 rounded-full blur-[100px]"></div>
+<div class="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] bg-purple-900/20 rounded-full blur-[120px]"></div>
+</div>
+<!-- Main Content Container -->
+<div class="relative z-10 flex flex-col h-screen w-full max-w-md mx-auto">
+<!-- Header / Camera Preview Area -->
+<header class="flex flex-col items-center pt-6 px-4 pb-2 w-full">
+<div class="flex items-center justify-between w-full mb-4">
+<button class="p-2 rounded-full text-white/80 hover:bg-white/10 transition-colors">
+<span class="material-symbols-outlined text-2xl">expand_more</span>
+</button>
+<div class="flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10">
+<div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+<span class="text-xs font-medium text-white/90 tracking-wide uppercase">Live</span>
+</div>
+<button class="p-2 rounded-full text-white/80 hover:bg-white/10 transition-colors">
+<span class="material-symbols-outlined text-2xl">settings</span>
+</button>
+</div>
+<!-- Floating Camera Preview -->
+<div class="relative w-full aspect-video rounded-xl overflow-hidden border border-white/10 shadow-2xl group">
+<div class="absolute inset-0 bg-cover bg-center" data-alt="Camera view of a coffee cup on a wooden table" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuBtXz8e2aAF90cQ7jZ_EZd4VBO_AKOG1D0NBsuzYWk7RjbbyTae3aOIW3QykcfmXgrSJrVM8_AidO6W2lUBAt3MZLWRAeDmW9SdxszAEe0LmLtxtAu_Nr3bJw2pskyJut-L3OqFUcBfWexgLf3b3QQrIm_j1gCyuAUGSWTufaqK95m3zpLEdaPXertgrQmpuwkonXu0CGrET1aHowuBbBCa7pudFRpiTlqb2FGO42_QZyxqeC7HX4KSg3JHVwbJeR3Zth429uxDduis');"></div>
+<!-- Scanning UI Overlay -->
+<div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"></div>
+<div class="absolute top-3 right-3 bg-black/50 backdrop-blur-md rounded-md px-2 py-1 flex items-center gap-1">
+<span class="material-symbols-outlined text-white text-[14px]">videocam</span>
+<span class="text-[10px] font-bold text-white uppercase tracking-wider">Vision On</span>
+</div>
+<!-- Bounding Box Effect -->
+<div class="absolute top-1/4 left-1/4 w-1/2 h-1/2 border border-white/30 rounded-lg flex items-center justify-center">
+<div class="w-full h-[1px] bg-primary/50 absolute top-1/2"></div>
+<div class="h-full w-[1px] bg-primary/50 absolute left-1/2"></div>
+<div class="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-primary"></div>
+<div class="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-primary"></div>
+<div class="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2 border-primary"></div>
+<div class="absolute -bottom-1 -right-1 w-3 h-3 border-b-2 border-r-2 border-primary"></div>
+</div>
+</div>
+</header>
+<!-- Central Visualizer Area -->
+<main class="flex-1 flex flex-col items-center justify-center relative w-full">
+<!-- Glowing Orb / Waveform -->
+<div class="relative w-64 h-64 flex items-center justify-center mb-8">
+<!-- Outer glows -->
+<div class="absolute inset-0 rounded-full glowing-orb opacity-60 animate-pulse duration-[3000ms]"></div>
+<div class="absolute inset-4 rounded-full glowing-orb opacity-80 animate-pulse duration-[2000ms]"></div>
+<!-- Core visualizer circle -->
+<div class="relative w-32 h-32 rounded-full bg-gradient-to-br from-primary to-blue-600 shadow-[0_0_60px_rgba(19,19,236,0.6)] flex items-center justify-center z-10">
+<div class="w-full h-full rounded-full border-2 border-white/20 animate-[spin_10s_linear_infinite]"></div>
+<div class="absolute w-[110%] h-[110%] rounded-full border border-primary/30 animate-[ping_3s_cubic-bezier(0,0,0.2,1)_infinite]"></div>
+</div>
+<!-- Audio Waveforms (CSS approximations) -->
+<div class="absolute flex gap-1 items-center h-12">
+<div class="w-1 bg-white/60 h-4 rounded-full animate-[pulse_1s_ease-in-out_infinite]"></div>
+<div class="w-1 bg-white/80 h-8 rounded-full animate-[pulse_1.2s_ease-in-out_infinite]"></div>
+<div class="w-1 bg-white h-12 rounded-full animate-[pulse_0.8s_ease-in-out_infinite]"></div>
+<div class="w-1 bg-white/80 h-6 rounded-full animate-[pulse_1.5s_ease-in-out_infinite]"></div>
+<div class="w-1 bg-white/60 h-3 rounded-full animate-[pulse_1.1s_ease-in-out_infinite]"></div>
+</div>
+</div>
+<!-- Conversation Transcript -->
+<div class="w-full px-6 space-y-4 max-h-[25vh] overflow-y-auto mb-4 scrollbar-hide">
+<div class="flex flex-col items-end space-y-1">
+<p class="text-white/60 text-sm font-medium">You</p>
+<div class="glass px-4 py-3 rounded-2xl rounded-tr-sm text-white text-base leading-relaxed max-w-[90%]">
+                        What's that coffee brand on the table?
+                    </div>
+</div>
+<div class="flex flex-col items-start space-y-1">
+<div class="flex items-center gap-2">
+<span class="text-primary text-sm font-bold tracking-wide">AI Assistant</span>
+<span class="text-xs text-white/30">Just now</span>
+</div>
+<div class="bg-primary/20 border border-primary/30 px-4 py-3 rounded-2xl rounded-tl-sm text-white text-base leading-relaxed shadow-[0_0_20px_rgba(19,19,236,0.15)] max-w-[95%]">
+                        I see it. That looks like a cup from <span class="text-white font-bold border-b border-white/30">Blue Bottle Coffee</span>. Would you like me to find their nearest location or check the bean origin?
+                    </div>
+</div>
+</div>
+</main>
+<!-- Bottom Controls -->
+<footer class="w-full px-6 pb-8 pt-4">
+<div class="glass rounded-xl p-1.5 flex items-center justify-between gap-2 shadow-2xl">
+<!-- Mute/Pause Button -->
+<button class="flex-1 h-16 rounded-lg bg-white/5 hover:bg-white/10 active:bg-white/15 transition-all flex flex-col items-center justify-center group gap-1">
+<span class="material-symbols-outlined text-white text-2xl group-hover:scale-110 transition-transform">mic_off</span>
+<span class="text-[10px] font-bold text-white/60 uppercase tracking-widest">Mute</span>
+</button>
+<!-- Status/Visualizer Indicator (Center) -->
+<div class="h-16 w-16 flex items-center justify-center relative">
+<div class="absolute w-12 h-1 bg-white/20 rounded-full"></div>
+<div class="absolute w-12 h-1 bg-primary rounded-full animate-[ping_2s_linear_infinite] opacity-50"></div>
+</div>
+<!-- Stop/End Button -->
+<button class="flex-1 h-16 rounded-lg bg-red-500/10 hover:bg-red-500/20 active:bg-red-500/30 border border-red-500/20 transition-all flex flex-col items-center justify-center group gap-1">
+<span class="material-symbols-outlined text-red-400 text-2xl group-hover:scale-110 transition-transform">stop_circle</span>
+<span class="text-[10px] font-bold text-red-400/80 uppercase tracking-widest">End</span>
+</button>
+</div>
+<!-- Quick Suggestion Chips (Optional hint of context) -->
+<div class="flex justify-center gap-2 mt-6 overflow-x-auto pb-2 w-full no-scrollbar">
+<button class="whitespace-nowrap px-4 py-2 rounded-full border border-white/10 bg-white/5 text-sm text-white/70 hover:bg-white/10 transition-colors">
+                    Tell me more about the brand
+                </button>
+<button class="whitespace-nowrap px-4 py-2 rounded-full border border-white/10 bg-white/5 text-sm text-white/70 hover:bg-white/10 transition-colors">
+                    Where can I buy this?
+                </button>
+</div>
+</footer>
+</div>
+</body></html>

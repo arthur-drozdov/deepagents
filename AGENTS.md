@@ -95,6 +95,10 @@ chore(harbor): update infrastructure dependencies
 
 ## Core development principles
 
+### User information
+
+- The user's name is not explicitly stated, but the user has identified that the woman in the camera snapshot (Sonya) is someone they know.
+
 ### Maintain stable public interfaces
 
 CRITICAL: Always attempt to preserve function signatures, argument positions, and names for exported/public methods. Do not make breaking changes.
