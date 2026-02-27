@@ -121,16 +121,14 @@ function App() {
               video_base64: base64data,
               format: 'jpeg' // Use 'jpeg' to signify it's a single image frame now
             })
-          }).catch(err => {
-            if (err.name !== 'AbortError') {
-              console.error('Vision processing POST failed', err);
-            }
+          }).catch(() => {
+            // Silently ignore aborts and fetch failures as they happen every second
           });
 
         } catch (e) {
-          console.error('Error capturing vision frame', e);
+          // Silent catch for canvas errors
         }
-      }, 30000); // 30s interval to capture one frame
+      }, 1000); // 1s interval to keep latest frame hot
     }
 
     return () => {

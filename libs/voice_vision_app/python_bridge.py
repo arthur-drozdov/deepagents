@@ -10,15 +10,33 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from deepagents_cli.agent import create_cli_agent
 from deepagents_cli.config import create_model
+from langchain_core.tools import BaseTool
 from langchain_core.messages import HumanMessage
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("python_bridge")
 
-# We will instantiate the agent once
-agent = None
-backend = None
-active_vision_task = None
+class CameraVision(BaseTool):
+    name: str = "Vision"
+    description: str = "Use this tool to see the most recent frame from the user's camera when they ask you what you see. It returns the image data."
+
+    def _run(self) -> list[dict]:
+        import os
+        import base64
+        frame_path = os.path.join(os.getcwd(), "latest_frame.jpg")
+        if not os.path.exists(frame_path):
+            return [{"type": "text", "text": "The camera frame is not available yet."}]
+
+        try:
+            with open(frame_path, "rb") as f:
+                image_bytes = f.read()
+            b64_img = base64.b64encode(image_bytes).decode('utf-8')
+            return [
+                {"type": "text", "text": "Here is the most recent snapshot from the user's camera:"},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}}
+            ]
+        except Exception as e:
+            return [{"type": "text", "text": f"Error reading camera frame: {e}"}]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -36,10 +54,18 @@ async def lifespan(app: FastAPI):
         result.apply_to_settings()
         logger.info(f"Loaded model: {result.model_name} from provider: {result.provider}")
 
+        system_prompt = (
+            "You are a helpful and concise voice assistant. "
+            "You have access to a tool called 'Vision' which returns the latest camera snapshot from the user. "
+            "If the user asks a vision-related question (e.g. 'what do you see?'), you MUST call the Vision tool to see the image. "
+            "When analyzing the image, describe what is visibly present as if you are naturally seeing it. Do not use markdown."
+        )
+
         agent, backend = create_cli_agent(
             model=result.model,
             assistant_id="voice_vision_app",
-            system_prompt="You are a helpful and concise voice assistant. If the user asks a vision-related question, you can implicitly refer to the content in VIDEO.md, but NEVER mention the filename 'VIDEO.md' or state that you are reading from a file. Just act as if you are naturally seeing what is described. Do not use markdown.",
+            system_prompt=system_prompt,
+            tools=[CameraVision()],
             enable_memory=True,
             enable_skills=True,
             enable_shell=False, # Disable shell for safety in this bridge
@@ -67,51 +93,18 @@ class VisionPayload(BaseModel):
 
 @app.post("/vision")
 async def process_vision(payload: VisionPayload):
-    global agent, active_vision_task
-    if not agent:
-        return {"error": "Agent not initialized"}
-
     try:
-        if active_vision_task and not active_vision_task.done():
-            logger.info("Canceling previous in-flight vision task")
-            active_vision_task.cancel()
+        # Save the latest 240p frame directly to disk so the vision tool can read it
+        import base64
+        import os
 
-        logger.info(f"Received image snapshot (format: {payload.format}), processing with Vision Agent...")
+        frame_path = os.path.join(os.getcwd(), "latest_frame.jpg")
+        image_data = base64.b64decode(payload.video_base64)
 
-        prompt = "Here is a recent snapshot from the user's camera. Save what you see in the image to the file VIDEO.md in the current directory. Only describe what is visibly present."
+        with open(frame_path, "wb") as f:
+            f.write(image_data)
 
-        image_msg = {
-            "type": "image_url",
-            "image_url": {"url": f"data:image/{payload.format};base64,{payload.video_base64}"}
-        }
-
-        input_state = {
-            "messages": [
-                HumanMessage(content=[
-                    {"type": "text", "text": prompt},
-                    image_msg
-                ])
-            ]
-        }
-
-        # A separate thread id ensures it doesn't pollute the spoken voice memory buffer
-        config = {"configurable": {"thread_id": "vision_background_session"}}
-
-        async def run_vision():
-            logger.info("Starting background vision task...")
-            try:
-                # We consume the generator to actually run it
-                async for event in agent.astream(input_state, config=config, stream_mode="messages"):
-                    pass
-                logger.info("Finished background vision task and wrote VIDEO.md")
-            except asyncio.CancelledError:
-                logger.info("Vision task was cancelled")
-            except Exception as e:
-                logger.error(f"Error in background vision task: {e}")
-
-        active_vision_task = asyncio.create_task(run_vision())
-
-        return {"status": "processing"}
+        return {"status": "saved"}
     except Exception as e:
         logger.error(f"Vision endpoint error: {e}")
         return {"error": str(e)}
